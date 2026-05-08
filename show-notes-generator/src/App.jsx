@@ -426,7 +426,10 @@ Only return valid JSON, no markdown, no preamble.`;
     .join("");
 
   const clean = text.replace(/```json|```/g, "").trim();
-  return JSON.parse(clean);
+  const jsonMatch = clean.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return { title: new URL(url).hostname, summary: "Could not retrieve a summary. Visit the link directly.", tags: [] };
+  try { return JSON.parse(jsonMatch[0]); }
+  catch { return { title: new URL(url).hostname, summary: "Could not retrieve a summary. Visit the link directly.", tags: [] }; }
 }
 
 function formatMarkdown(items, podcastName, episodeTitle, episodeNumber) {
