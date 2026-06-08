@@ -468,7 +468,7 @@ function formatNewsletter(items, podcastName, episodeTitle, episodeNumber) {
 
 export default function ShowNotesGenerator() {
   const [apiKey, setApiKey] = useState(ENV_API_KEY);
-  const [podcastName, setPodcastName] = useState("");
+  const [podcastName, setPodcastName] = useState("Old's Cool");
   const [episodeTitle, setEpisodeTitle] = useState("");
   const [episodeNumber, setEpisodeNumber] = useState("");
   const [linksText, setLinksText] = useState("");
@@ -572,10 +572,10 @@ export default function ShowNotesGenerator() {
         <div className="config-row">
           <div className="config-field">
             <label>Podcast Name</label>
-            <input value={podcastName} onChange={(e) => setPodcastName(e.target.value)} placeholder="My Weekly Show" />
+            <input value={podcastName} disabled style={{ opacity: 0.5, cursor: "not-allowed" }} />
           </div>
           <div className="config-field">
-            <label>Episode Title</label>
+            <label>Show Summary</label>
             <input value={episodeTitle} onChange={(e) => setEpisodeTitle(e.target.value)} placeholder="This week's episode..." />
           </div>
           <div className="config-field" style={{ maxWidth: 120 }}>
