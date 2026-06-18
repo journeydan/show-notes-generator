@@ -29,7 +29,7 @@ function loadCache() {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
+  } catch { return {}; 
 }
 
 function saveCache(cache) {
@@ -878,6 +878,10 @@ export default function ShowNotesGenerator() {
   const [suggestingTags, setSuggestingTags] = useState(false);
   const [suggestedTags, setSuggestedTags] = useState([]);
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
+    const [editingIndex, setEditingIndex] = useState(-1);
+    const [editTitle, setEditTitle] = useState("");
+    const [editSummary, setEditSummary] = useState("");
+    const [editTags, setEditTags] = useState("");
 
   const itemsRef = useRef([]);
   const initialized = useRef(false);
