@@ -11,6 +11,7 @@ const TEXT = "#F0F0F0";
 const STORAGE_KEY = "show-notes-generator-v2";
 const CACHE_KEY = "show-notes-generator-cache";
 const BATCH_SIZE = 3;
+const HISTORY_KEY = "show-notes-generator-history";
 
 /* ─── Utilities ─── */
 
@@ -34,6 +35,22 @@ function loadCache() {
 
 function saveCache(cache) {
   try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
+}
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function addToHistory(entry) {
+  try {
+    const history = loadHistory();
+    const deduped = history.filter((h) => h.id !== entry.id);
+    const updated = [entry, ...deduped].slice(0, 50);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+  } catch {}
 }
 
 function getCacheKey(url, customPrompt) {
@@ -882,6 +899,8 @@ export default function ShowNotesGenerator() {
     const [editTitle, setEditTitle] = useState("");
     const [editSummary, setEditSummary] = useState("");
     const [editTags, setEditTags] = useState("");
+  const [episodeHistory, setEpisodeHistory] = useState(() => loadHistory());
+  const [showHistory, setShowHistory] = useState(false);
 
   const itemsRef = useRef([]);
   const initialized = useRef(false);
@@ -980,6 +999,22 @@ export default function ShowNotesGenerator() {
     }
 
     setIsRunning(false);
+
+    // Auto-save to history when generation completes
+    const finalItems = itemsRef.current;
+    if (finalItems.some((i) => i.status === "done")) {
+      const entry = {
+        id: Date.now(),
+        savedAt: new Date().toISOString(),
+        podcastName,
+        episodeTitle,
+        episodeNumber,
+        episodeDate,
+        items: finalItems,
+      };
+      addToHistory(entry);
+      setEpisodeHistory(loadHistory());
+    }
   };
 
   const handleClear = () => {
@@ -1400,6 +1435,128 @@ export default function ShowNotesGenerator() {
           </>
         )}
       </div>
+
+      {/* ─── Past Episodes History ─── */}
+      {episodeHistory.length > 0 && (
+        <div style={{ maxWidth: 640, margin: "24px auto 0", padding: "0 16px 48px" }}>
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            style={{
+              background: "none",
+              border: `1px solid ${BORDER}`,
+              color: MUTED,
+              padding: "8px 14px",
+              borderRadius: 6,
+              cursor: "pointer",
+              fontSize: 13,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span style={{ fontSize: 10 }}>{showHistory ? "▲" : "▼"}</span>
+            Past Episodes ({episodeHistory.length})
+          </button>
+
+          {showHistory && (
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              {episodeHistory.map((entry) => {
+                const date = new Date(entry.savedAt);
+                const label = [entry.podcastName, entry.episodeTitle, entry.episodeNumber && `#${entry.episodeNumber}`]
+                  .filter(Boolean)
+                  .join(" · ");
+                const doneCount = entry.items.filter((i) => i.status === "done").length;
+                return (
+                  <div
+                    key={entry.id}
+                    style={{
+                      background: CARD,
+                      border: `1px solid ${BORDER}`,
+                      borderRadius: 8,
+                      padding: "12px 14px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: TEXT, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {label || "Untitled Episode"}
+                      </div>
+                      <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
+                        {doneCount} link{doneCount !== 1 ? "s" : ""} · saved {date.toLocaleDateString()} {date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      <button
+                        onClick={() => {
+                          setPodcastName(entry.podcastName || "");
+                          setEpisodeTitle(entry.episodeTitle || "");
+                          setEpisodeNumber(entry.episodeNumber || "");
+                          setEpisodeDate(entry.episodeDate || "");
+                          setItems(entry.items);
+                          itemsRef.current = entry.items;
+                          setActiveTab("cards");
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        style={{
+                          background: ACCENT,
+                          color: BG,
+                          border: "none",
+                          padding: "5px 12px",
+                          borderRadius: 5,
+                          cursor: "pointer",
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      >
+                        Restore
+                      </button>
+                      <button
+                        onClick={() => {
+                          const updated = episodeHistory.filter((h) => h.id !== entry.id);
+                          localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+                          setEpisodeHistory(updated);
+                        }}
+                        style={{
+                          background: "none",
+                          border: `1px solid ${BORDER}`,
+                          color: MUTED,
+                          padding: "5px 10px",
+                          borderRadius: 5,
+                          cursor: "pointer",
+                          fontSize: 12,
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              <button
+                onClick={() => {
+                  localStorage.removeItem(HISTORY_KEY);
+                  setEpisodeHistory([]);
+                  setShowHistory(false);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: MUTED,
+                  fontSize: 11,
+                  cursor: "pointer",
+                  alignSelf: "flex-end",
+                  padding: "4px 0",
+                }}
+              >
+                Clear all history
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }
