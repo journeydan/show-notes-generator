@@ -29,7 +29,7 @@ function loadCache() {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     return raw ? JSON.parse(raw) : {};
-  } catch { return {}; 
+  } catch { return {}; }
 }
 
 function saveCache(cache) {
