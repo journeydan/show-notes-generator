@@ -11,7 +11,7 @@ const TEXT = "#F0F0F0";
 const STORAGE_KEY = "show-notes-generator-v2";
 const CACHE_KEY = "show-notes-generator-cache";
 const BATCH_SIZE = 3;
-const HISTORY_KEY = "show-notes-generator-history";
+const EPISODE_KEY = "show-notes-generator-episodes";
 
 /* ─── Utilities ─── */
 
@@ -37,19 +37,19 @@ function saveCache(cache) {
   try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
 }
 
-function loadHistory() {
+function loadEpisodes() {
   try {
-    const raw = localStorage.getItem(HISTORY_KEY);
+    const raw = localStorage.getItem(EPISODE_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
-function addToHistory(entry) {
+function upsertEpisode(episode) {
   try {
-    const history = loadHistory();
-    const deduped = history.filter((h) => h.id !== entry.id);
-    const updated = [entry, ...deduped].slice(0, 50);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+    const episodes = loadEpisodes();
+    const idx = episodes.findIndex((e) => e.id === episode.id);
+    if (idx >= 0) { episodes[idx] = episode; } else { episodes.unshift(episode); }
+    localStorage.setItem(EPISODE_KEY, JSON.stringify(episodes.slice(0, 100)));
   } catch {}
 }
 
@@ -899,8 +899,9 @@ export default function ShowNotesGenerator() {
     const [editTitle, setEditTitle] = useState("");
     const [editSummary, setEditSummary] = useState("");
     const [editTags, setEditTags] = useState("");
-  const [episodeHistory, setEpisodeHistory] = useState(() => loadHistory());
-  const [showHistory, setShowHistory] = useState(false);
+  const [episodes, setEpisodes] = useState(() => loadEpisodes());
+  const [showEpisodes, setShowEpisodes] = useState(false);
+  const [currentEpisodeId, setCurrentEpisodeId] = useState(null);
 
   const itemsRef = useRef([]);
   const initialized = useRef(false);
@@ -1000,20 +1001,28 @@ export default function ShowNotesGenerator() {
 
     setIsRunning(false);
 
-    // Auto-save to history when generation completes
+    // Auto-save/update episode draft after generation
     const finalItems = itemsRef.current;
     if (finalItems.some((i) => i.status === "done")) {
-      const entry = {
-        id: Date.now(),
-        savedAt: new Date().toISOString(),
-        podcastName,
-        episodeTitle,
-        episodeNumber,
-        episodeDate,
-        items: finalItems,
-      };
-      addToHistory(entry);
-      setEpisodeHistory(loadHistory());
+      setEpisodes((prev) => {
+        const id = currentEpisodeId || Date.now();
+        const existing = prev.find((e) => e.id === id);
+        const episode = {
+          id,
+          status: existing?.status || "draft",
+          podcastName,
+          episodeTitle,
+          episodeNumber,
+          episodeDate,
+          items: finalItems,
+          pendingLinks: "",
+          createdAt: existing?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        upsertEpisode(episode);
+        if (!currentEpisodeId) setCurrentEpisodeId(id);
+        return loadEpisodes();
+      });
     }
   };
 
@@ -1022,6 +1031,27 @@ export default function ShowNotesGenerator() {
     setLinksText("");
     itemsRef.current = [];
     setSuggestedTags([]);
+    setCurrentEpisodeId(null);
+  };
+
+  const handleSaveDraft = () => {
+    const id = currentEpisodeId || Date.now();
+    const existing = episodes.find((e) => e.id === id);
+    const episode = {
+      id,
+      status: existing?.status === "done" ? "done" : "draft",
+      podcastName,
+      episodeTitle,
+      episodeNumber,
+      episodeDate,
+      items: itemsRef.current,
+      pendingLinks: linksText,
+      createdAt: existing?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    upsertEpisode(episode);
+    setCurrentEpisodeId(id);
+    setEpisodes(loadEpisodes());
   };
 
   const handleCopy = () => {
@@ -1298,6 +1328,11 @@ export default function ShowNotesGenerator() {
               <>✦ Generate Show Notes</>
             )}
           </button>
+          {(items.length > 0 || linksText.trim()) && !isRunning && (
+            <button className="btn-secondary" onClick={handleSaveDraft}>
+              {currentEpisodeId ? "↑ Update Draft" : "Save Draft"}
+            </button>
+          )}
           {items.length > 0 && !isRunning && (
             <button className="btn-secondary" onClick={handleClear}>Clear All</button>
           )}
@@ -1436,127 +1471,168 @@ export default function ShowNotesGenerator() {
         )}
       </div>
 
-      {/* ─── Past Episodes History ─── */}
-      {episodeHistory.length > 0 && (
-        <div style={{ maxWidth: 640, margin: "24px auto 0", padding: "0 16px 48px" }}>
-          <button
-            onClick={() => setShowHistory((v) => !v)}
-            style={{
-              background: "none",
-              border: `1px solid ${BORDER}`,
-              color: MUTED,
-              padding: "8px 14px",
-              borderRadius: 6,
-              cursor: "pointer",
-              fontSize: 13,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            <span style={{ fontSize: 10 }}>{showHistory ? "▲" : "▼"}</span>
-            Past Episodes ({episodeHistory.length})
-          </button>
+      {/* ─── Episodes Panel ─── */}
+      <div style={{ maxWidth: 640, margin: "24px auto 0", padding: "0 16px 48px" }}>
+        <button
+          onClick={() => setShowEpisodes((v) => !v)}
+          style={{
+            background: "none",
+            border: `1px solid ${BORDER}`,
+            color: episodes.length > 0 ? TEXT : MUTED,
+            padding: "8px 14px",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span style={{ fontSize: 10 }}>{showEpisodes ? "▲" : "▼"}</span>
+          Episodes {episodes.length > 0 ? `(${episodes.filter(e => e.status === "draft").length} draft · ${episodes.filter(e => e.status === "done").length} done)` : ""}
+        </button>
 
-          {showHistory && (
-            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-              {episodeHistory.map((entry) => {
-                const date = new Date(entry.savedAt);
-                const label = [entry.podcastName, entry.episodeTitle, entry.episodeNumber && `#${entry.episodeNumber}`]
-                  .filter(Boolean)
-                  .join(" · ");
-                const doneCount = entry.items.filter((i) => i.status === "done").length;
-                return (
-                  <div
-                    key={entry.id}
-                    style={{
-                      background: CARD,
-                      border: `1px solid ${BORDER}`,
-                      borderRadius: 8,
-                      padding: "12px 14px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, color: TEXT, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {label || "Untitled Episode"}
+        {showEpisodes && (
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 16 }}>
+
+            {/* Drafts section */}
+            {episodes.some(e => e.status === "draft") && (
+              <div>
+                <div style={{ fontSize: 11, color: MUTED, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>In Progress</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {episodes.filter(e => e.status === "draft").map((ep) => {
+                    const date = new Date(ep.updatedAt || ep.createdAt);
+                    const label = [ep.podcastName, ep.episodeTitle, ep.episodeNumber && `#${ep.episodeNumber}`].filter(Boolean).join(" · ");
+                    const doneCount = (ep.items || []).filter(i => i.status === "done").length;
+                    const pendingCount = (ep.pendingLinks || "").trim().split(/[\n,]+/).filter(u => u.trim()).length;
+                    const isActive = ep.id === currentEpisodeId;
+                    return (
+                      <div key={ep.id} style={{ background: CARD, border: `1px solid ${isActive ? ACCENT : BORDER}`, borderRadius: 8, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, color: TEXT, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {label || "Untitled Episode"}
+                            {isActive && <span style={{ marginLeft: 8, fontSize: 10, color: ACCENT, fontWeight: 400 }}>● active</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
+                            {doneCount} generated{pendingCount > 0 ? ` · ${pendingCount} pending` : ""} · saved {date.toLocaleDateString()} {date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          <button
+                            onClick={() => {
+                              setPodcastName(ep.podcastName || "");
+                              setEpisodeTitle(ep.episodeTitle || "");
+                              setEpisodeNumber(ep.episodeNumber || "");
+                              setEpisodeDate(ep.episodeDate || "");
+                              setItems(ep.items || []);
+                              itemsRef.current = ep.items || [];
+                              setLinksText(ep.pendingLinks || "");
+                              setCurrentEpisodeId(ep.id);
+                              setActiveTab("cards");
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
+                            style={{ background: ACCENT, color: BG, border: "none", padding: "5px 12px", borderRadius: 5, cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+                          >
+                            Continue
+                          </button>
+                          <button
+                            onClick={() => {
+                              const updated = { ...ep, status: "done", updatedAt: new Date().toISOString() };
+                              upsertEpisode(updated);
+                              setEpisodes(loadEpisodes());
+                            }}
+                            style={{ background: "none", border: `1px solid ${BORDER}`, color: MUTED, padding: "5px 10px", borderRadius: 5, cursor: "pointer", fontSize: 12 }}
+                          >
+                            ✓ Done
+                          </button>
+                          <button
+                            onClick={() => {
+                              const updated = episodes.filter(e => e.id !== ep.id);
+                              localStorage.setItem(EPISODE_KEY, JSON.stringify(updated));
+                              setEpisodes(updated);
+                            }}
+                            style={{ background: "none", border: `1px solid ${BORDER}`, color: MUTED, padding: "5px 10px", borderRadius: 5, cursor: "pointer", fontSize: 12 }}
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
-                        {doneCount} link{doneCount !== 1 ? "s" : ""} · saved {date.toLocaleDateString()} {date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Archive section */}
+            {episodes.some(e => e.status === "done") && (
+              <div>
+                <div style={{ fontSize: 11, color: MUTED, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Archive</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {episodes.filter(e => e.status === "done").map((ep) => {
+                    const date = new Date(ep.updatedAt || ep.createdAt);
+                    const label = [ep.podcastName, ep.episodeTitle, ep.episodeNumber && `#${ep.episodeNumber}`].filter(Boolean).join(" · ");
+                    const doneCount = (ep.items || []).filter(i => i.status === "done").length;
+                    return (
+                      <div key={ep.id} style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, opacity: 0.8 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, color: TEXT, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {label || "Untitled Episode"}
+                          </div>
+                          <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
+                            {doneCount} link{doneCount !== 1 ? "s" : ""} · {date.toLocaleDateString()}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          <button
+                            onClick={() => {
+                              setPodcastName(ep.podcastName || "");
+                              setEpisodeTitle(ep.episodeTitle || "");
+                              setEpisodeNumber(ep.episodeNumber || "");
+                              setEpisodeDate(ep.episodeDate || "");
+                              setItems(ep.items || []);
+                              itemsRef.current = ep.items || [];
+                              setLinksText("");
+                              setCurrentEpisodeId(ep.id);
+                              setActiveTab("cards");
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
+                            style={{ background: "none", border: `1px solid ${BORDER}`, color: TEXT, padding: "5px 12px", borderRadius: 5, cursor: "pointer", fontSize: 12 }}
+                          >
+                            View
+                          </button>
+                          <button
+                            onClick={() => {
+                              const updated = episodes.filter(e => e.id !== ep.id);
+                              localStorage.setItem(EPISODE_KEY, JSON.stringify(updated));
+                              setEpisodes(updated);
+                            }}
+                            style={{ background: "none", border: `1px solid ${BORDER}`, color: MUTED, padding: "5px 10px", borderRadius: 5, cursor: "pointer", fontSize: 12 }}
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                      <button
-                        onClick={() => {
-                          setPodcastName(entry.podcastName || "");
-                          setEpisodeTitle(entry.episodeTitle || "");
-                          setEpisodeNumber(entry.episodeNumber || "");
-                          setEpisodeDate(entry.episodeDate || "");
-                          setItems(entry.items);
-                          itemsRef.current = entry.items;
-                          setActiveTab("cards");
-                          window.scrollTo({ top: 0, behavior: "smooth" });
-                        }}
-                        style={{
-                          background: ACCENT,
-                          color: BG,
-                          border: "none",
-                          padding: "5px 12px",
-                          borderRadius: 5,
-                          cursor: "pointer",
-                          fontSize: 12,
-                          fontWeight: 700,
-                        }}
-                      >
-                        Restore
-                      </button>
-                      <button
-                        onClick={() => {
-                          const updated = episodeHistory.filter((h) => h.id !== entry.id);
-                          localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-                          setEpisodeHistory(updated);
-                        }}
-                        style={{
-                          background: "none",
-                          border: `1px solid ${BORDER}`,
-                          color: MUTED,
-                          padding: "5px 10px",
-                          borderRadius: 5,
-                          cursor: "pointer",
-                          fontSize: 12,
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {episodes.length === 0 && (
+              <div style={{ fontSize: 13, color: MUTED, padding: "8px 0" }}>No episodes yet. Save a draft or generate to get started.</div>
+            )}
+
+            {episodes.length > 0 && (
               <button
-                onClick={() => {
-                  localStorage.removeItem(HISTORY_KEY);
-                  setEpisodeHistory([]);
-                  setShowHistory(false);
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: MUTED,
-                  fontSize: 11,
-                  cursor: "pointer",
-                  alignSelf: "flex-end",
-                  padding: "4px 0",
-                }}
+                onClick={() => { localStorage.removeItem(EPISODE_KEY); setEpisodes([]); setCurrentEpisodeId(null); }}
+                style={{ background: "none", border: "none", color: MUTED, fontSize: 11, cursor: "pointer", alignSelf: "flex-end", padding: "4px 0" }}
               >
-                Clear all history
+                Clear all
               </button>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </div>
     </>
   );
 }
