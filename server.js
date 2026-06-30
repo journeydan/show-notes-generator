@@ -73,8 +73,8 @@ function parseEpisodeFile(content, slug) {
   return { slug, number: frontmatter.episode || '', title: frontmatter.title || '', podcast: frontmatter.podcast || '', date: frontmatter.date || '', links, body };
 }
 
-function buildEpisodeMarkdown({ number, title, podcast, date, items, sponsorText, linksText }) {
-  const slug = episodeSlug(number || '000');
+function buildEpisodeMarkdown({ number, title, podcast, date, items, sponsorText, linksText, slug: providedSlug }) {
+  const slug = providedSlug || episodeSlug(number || '000');
   let md = '---\n';
   if (podcast) md += `podcast: "${podcast}"\n`;
   if (title) md += `title: "${title}"\n`;
@@ -149,8 +149,8 @@ app.get('/api/episodes/:slug', async (req, res) => {
 
 app.post('/api/episodes', async (req, res) => {
   try {
-    const { number, title, podcast, date, items, sponsorText, linksText } = req.body;
-    const { slug, markdown } = buildEpisodeMarkdown({ number, title, podcast, date, items, sponsorText, linksText });
+    const { number, title, podcast, date, items, sponsorText, linksText, slug: bodySlug } = req.body;
+    const { slug, markdown } = buildEpisodeMarkdown({ number, title, podcast, date, items, sponsorText, linksText, slug: bodySlug });
     await fs.writeFile(episodePath(slug), markdown, 'utf-8');
     await saveItems(slug, items || []);
     const content = await fs.readFile(episodePath(slug), 'utf-8');

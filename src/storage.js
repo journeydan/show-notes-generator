@@ -118,11 +118,11 @@ export async function saveEpisode(data) {
     _updated: now,
   };
 
-  // Save to API
+  // Save to API (pass slug so server uses the same one)
   const api = await tryAPI(API_BASE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ ...data, slug }),
   });
   if (api.ok) return api.data;
 
