@@ -25,6 +25,26 @@ function episodePath(slug) {
   return path.join(EPISODES_DIR, `${slug}.md`);
 }
 
+function itemsPath(slug) {
+  return path.join(EPISODES_DIR, `${slug}.items.json`);
+}
+
+async function loadItems(slug) {
+  try {
+    const data = await fs.readFile(itemsPath(slug), 'utf-8');
+    return JSON.parse(data);
+  } catch { return []; }
+}
+
+async function saveItems(slug, items) {
+  if (items && items.length > 0) {
+    await fs.writeFile(itemsPath(slug), JSON.stringify(items), 'utf-8');
+  } else {
+    // Remove items file if no items
+    try { await fs.unlink(itemsPath(slug)); } catch {}
+  }
+}
+
 function parseEpisodeFile(content, slug) {
   const lines = content.split('\n');
   const frontmatter = {};
@@ -50,11 +70,7 @@ function parseEpisodeFile(content, slug) {
   const urlRegex = /https?:\/\/[^\s\n)]+/g;
   let match;
   while ((match = urlRegex.exec(body)) !== null) links.push(match[0]);
-  let items = [];
-  if (frontmatter.items_json) {
-    try { items = frontmatter.items_json.split('|||').map(s => JSON.parse(s)); } catch {}
-  }
-  return { slug, number: frontmatter.episode || '', title: frontmatter.title || '', podcast: frontmatter.podcast || '', date: frontmatter.date || '', links, body, items };
+  return { slug, number: frontmatter.episode || '', title: frontmatter.title || '', podcast: frontmatter.podcast || '', date: frontmatter.date || '', links, body };
 }
 
 function buildEpisodeMarkdown({ number, title, podcast, date, items, sponsorText, linksText }) {
@@ -64,7 +80,6 @@ function buildEpisodeMarkdown({ number, title, podcast, date, items, sponsorText
   if (title) md += `title: "${title}"\n`;
   if (number) md += `episode: "${number}"\n`;
   if (date) md += `date: "${date}"\n`;
-  if (items?.length) md += `items_json: "${items.filter(i => i).map(i => ({url:i.url,title:i.title,summary:i.summary,tags:i.tags||[],status:i.status})).map(i => JSON.stringify(i).replace(/"/g, '\\"')).join('|||')}"\n`;
   md += '---\n\n';
   if (items?.length) {
     items.filter(i => i.status === 'done').forEach((item, i) => {
@@ -106,8 +121,11 @@ app.get('/api/episodes', async (req, res) => {
     const mdFiles = files.filter(f => f.endsWith('.md')).sort();
     const episodes = await Promise.all(
       mdFiles.map(async (file) => {
+        const slug = file.replace(/\.md$/, '');
         const content = await fs.readFile(path.join(EPISODES_DIR, file), 'utf-8');
-        return parseEpisodeFile(content, file.replace(/\.md$/, ''));
+        const ep = parseEpisodeFile(content, slug);
+        ep.items = await loadItems(slug);
+        return ep;
       })
     );
     episodes.sort((a, b) => (parseInt(b.number) || 0) - (parseInt(a.number) || 0));
@@ -120,7 +138,9 @@ app.get('/api/episodes', async (req, res) => {
 app.get('/api/episodes/:slug', async (req, res) => {
   try {
     const content = await fs.readFile(episodePath(req.params.slug), 'utf-8');
-    res.json(parseEpisodeFile(content, req.params.slug));
+    const ep = parseEpisodeFile(content, req.params.slug);
+    ep.items = await loadItems(req.params.slug);
+    res.json(ep);
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Episode not found' });
     res.status(500).json({ error: err.message });
@@ -132,8 +152,11 @@ app.post('/api/episodes', async (req, res) => {
     const { number, title, podcast, date, items, sponsorText, linksText } = req.body;
     const { slug, markdown } = buildEpisodeMarkdown({ number, title, podcast, date, items, sponsorText, linksText });
     await fs.writeFile(episodePath(slug), markdown, 'utf-8');
+    await saveItems(slug, items || []);
     const content = await fs.readFile(episodePath(slug), 'utf-8');
-    res.json(parseEpisodeFile(content, slug));
+    const ep = parseEpisodeFile(content, slug);
+    ep.items = items || [];
+    res.json(ep);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -142,6 +165,7 @@ app.post('/api/episodes', async (req, res) => {
 app.delete('/api/episodes/:slug', async (req, res) => {
   try {
     await fs.unlink(episodePath(req.params.slug));
+    try { await fs.unlink(itemsPath(req.params.slug)); } catch {}
     res.json({ deleted: req.params.slug });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Episode not found' });
@@ -155,9 +179,9 @@ app.post('/api/episodes/:slug/sync-to-craft', async (req, res) => {
   try {
     const content = await fs.readFile(episodePath(req.params.slug), 'utf-8');
     const ep = parseEpisodeFile(content, req.params.slug);
+    ep.items = await loadItems(req.params.slug);
     const docTitle = ep.podcast ? `${ep.podcast}${ep.number ? ` · Ep. ${ep.number}` : ''}${ep.title ? `: ${ep.title}` : ''}` : `Show Notes ${ep.number ? `#${ep.number}` : ''}`;
 
-    // Create the document in the Podcast folder
     const createResult = await callCraftMCP('tools/call', {
       name: 'craft_write',
       arguments: { command: `documents create --title "${docTitle.replace(/"/g, '\\"')}" --folder ${CRAFT_PODCAST_FOLDER}` }
@@ -175,8 +199,6 @@ app.post('/api/episodes/:slug/sync-to-craft', async (req, res) => {
     }
 
     const rootBlockId = rootMatch[1];
-
-    // Add the body content as blocks
     const bodyMarkdown = ep.body;
     await callCraftMCP('tools/call', {
       name: 'craft_write',
