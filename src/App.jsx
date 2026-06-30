@@ -65,6 +65,7 @@ export default function ShowNotesGenerator() {
   });
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
+  const [pulling, setPulling] = useState(false);
 
   const itemsRef = useRef([]);
   const initialized = useRef(false);
@@ -352,6 +353,83 @@ export default function ShowNotesGenerator() {
       setTimeout(() => setSyncMessage(""), 4000);
     }
     setSyncing(false);
+  }
+
+  async function handlePullFromCraft() {
+    if (!craftKey) { setSyncMessage("Set Craft API key first"); setTimeout(() => setSyncMessage(""), 3000); return; }
+    setPulling(true);
+    setSyncMessage("");
+    try {
+      const slug = currentEpisodeSlug;
+      if (!slug) { setSyncMessage("No episode loaded"); setTimeout(() => setSyncMessage(""), 2000); return; }
+      const slugMarker = `[${slug}]`;
+
+      // Find the Craft doc
+      const listResp = await callMCP("tools/call", {
+        name: "craft_read",
+        arguments: { command: `documents list --folder ${CRAFT_FOLDER}` }
+      });
+      const listText = listResp?.result?.content?.[0]?.text || "";
+      let foundId = null;
+      for (const line of listText.split("\n")) {
+        const m = line.match(/<(\S+)>\s+(.+)/);
+        if (m && m[2].includes(slugMarker)) { foundId = m[1]; break; }
+      }
+      if (!foundId) { setSyncMessage("No Craft doc found for this episode"); setTimeout(() => setSyncMessage(""), 3000); setPulling(false); return; }
+
+      // Read the document content
+      const getResp = await callMCP("tools/call", {
+        name: "craft_read",
+        arguments: { command: `blocks get ${foundId} --format markdown` }
+      });
+      const mdText = getResp?.result?.content?.[0]?.text || "";
+
+      // Parse markdown into items
+      const parsedItems = [];
+      const blocks = mdText.split("\n## ");
+      for (const block of blocks) {
+        if (!block.trim()) continue;
+        const lines = block.split("\n");
+        const title = lines[0].replace(/^\d+\.\s*/, "").trim();
+        let url = "", summary = "", tags = [];
+        for (const l of lines) {
+          const urlMatch = l.match(/🔗\s*(https?:\/\/\S+)/);
+          if (urlMatch) url = urlMatch[1];
+          const tagMatch = l.match(/\*Tags:\s*(.+)\*/);
+          if (tagMatch) tags = tagMatch[1].split(",").map(t => t.trim());
+          if (!l.startsWith("#") && !l.startsWith("🔗") && !l.startsWith("*Tags:") && !l.startsWith("*") && l.trim() && !urlMatch && !tagMatch) {
+            summary = l.trim();
+          }
+        }
+        if (url) parsedItems.push({ url, title, summary, tags, status: "done" });
+      }
+
+      // Update form state with pulled content
+      if (parsedItems.length > 0) {
+        setItems(parsedItems);
+        itemsRef.current = parsedItems;
+      }
+      // Extract title from Craft doc title
+      const titleMatch = mdText.match(/<pageTitle>([^<]+)<\/pageTitle>/);
+      if (titleMatch) {
+        const craftTitle = titleMatch[1].replace(` ${slugMarker}`, "").trim();
+        const parts = craftTitle.split(" · ");
+        if (parts.length >= 2) {
+          setPodcastName(parts[0]);
+          const epMatch = parts[1].match(/Ep\.\s*(\d+)/);
+          if (epMatch) setEpisodeNumber(epMatch[1]);
+          if (parts.length >= 3) setEpisodeTitle(parts.slice(2).join(" · "));
+        }
+      }
+
+      setSyncMessage("Pulled from Craft!");
+      setTimeout(() => setSyncMessage(""), 3000);
+    } catch (e) {
+      console.error("Craft pull error:", e);
+      setSyncMessage("Pull failed: " + e.message);
+      setTimeout(() => setSyncMessage(""), 4000);
+    }
+    setPulling(false);
   }
 
   const handleCopy = () => {
@@ -644,6 +722,11 @@ export default function ShowNotesGenerator() {
           {(items.length > 0 || linksText.trim()) && !isRunning && (
             <button className="btn-craft" onClick={handleSyncToCraft} disabled={syncing}>
               {syncing ? "Syncing…" : syncMessage || "Sync to Craft"}
+            </button>
+          )}
+          {currentEpisodeSlug && !isRunning && (
+            <button className="btn-craft" onClick={handlePullFromCraft} disabled={pulling} style={{ borderColor: "#666", color: "#999" }}>
+              {pulling ? "Pulling…" : "Pull from Craft"}
             </button>
           )}
           {items.length > 0 && !isRunning && (
