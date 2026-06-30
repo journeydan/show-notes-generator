@@ -387,9 +387,13 @@ export default function ShowNotesGenerator() {
       // Parse markdown into items
       const parsedItems = [];
 
-      // Extract content between <content> tags and strip leading whitespace
-      const contentMatch = mdText.match(/<content>([\s\S]*?)<\/content>/);
-      const bodyText = contentMatch ? contentMatch[1].trim() : mdText;
+      // Strip <page>/<pageTitle>/<content> HTML wrapper tags that Craft may return
+      let bodyText = mdText
+        .replace(/<\/?(?:page|pageTitle|content)>/gi, "")
+        .trim();
+      // Also try explicit <content> extraction as fallback
+      const contentMatch = mdText.match(/<content>([\s\S]*?)<\/content>/i);
+      if (contentMatch) bodyText = contentMatch[1].trim();
 
       const blocks = bodyText.split(/\n## /);
       for (const block of blocks) {
@@ -399,17 +403,17 @@ export default function ShowNotesGenerator() {
         let url = "", summary = "", tags = [];
 
         for (const l of lines) {
-          // URL: handle bare URL or markdown link format
+          // URL: handle bare URL (🔗 https://…) or markdown link (🔗 [text](url))
+          const mdLink = l.match(/🔗\s*\[([^\]]*)\]\(([^)]+)\)/);
           const bareUrl = l.match(/🔗\s*(https?:\/\/\S+)/);
-          const mdLink = l.match(/🔗\s*\[(.+?)\]\((https?:\/\/\S+?)\)/);
           if (mdLink) url = mdLink[2];
           else if (bareUrl) url = bareUrl[1];
 
           const tagMatch = l.match(/\*Tags:\s*(.+)\*/);
           if (tagMatch) tags = tagMatch[1].split(",").map(t => t.trim());
 
-          // Summary: first non-header, non-URL, non-tag line
-          if (!l.startsWith("#") && !l.startsWith("🔗") && !l.startsWith("*Tags:") && !l.startsWith("*") && !tagMatch && !summary) {
+          // Summary: first non-header, non-URL, non-tag line per block
+          if (!l.startsWith("#") && !l.startsWith("🔗") && !l.startsWith("*Tags:") && !tagMatch && !summary) {
             summary = l.trim();
           }
         }
