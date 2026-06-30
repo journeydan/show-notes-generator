@@ -203,7 +203,7 @@ export default function ShowNotesGenerator() {
   const handleSaveDraft = async () => {
     try {
       const result = await saveEpisode({
-        number: episodeNumber,
+        number: episodeNumber || (currentEpisodeSlug ? currentEpisodeSlug.replace("episode-", "") : ""),
         title: episodeTitle,
         podcast: podcastName,
         date: episodeDate,
@@ -213,8 +213,10 @@ export default function ShowNotesGenerator() {
       });
       setCurrentEpisodeSlug(result.slug);
       await loadEpisodes();
+      return result;
     } catch (e) {
       console.error("Save draft failed:", e);
+      return null;
     }
   };
 
@@ -686,10 +688,11 @@ export default function ShowNotesGenerator() {
                   // Save to localStorage as fallback first
                   saveState({ podcastName, episodeTitle, episodeNumber, episodeDate, showSponsor, sponsorText, customPrompt, showCustomPrompt, items });
                   try {
-                    await handleSaveDraft();
-                    // Mark as done so it appears in Archive
-                    if (currentEpisodeSlug) {
-                      setDoneSlugs(prev => prev.includes(currentEpisodeSlug) ? prev : [...prev, currentEpisodeSlug]);
+                    const saved = await handleSaveDraft();
+                    // Mark as done so it appears in Archive — use returned slug not stale closure
+                    const slug = saved?.slug || currentEpisodeSlug;
+                    if (slug) {
+                      setDoneSlugs(prev => prev.includes(slug) ? prev : [...prev, slug]);
                     }
                     await loadEpisodes();
                   } catch (e) {
