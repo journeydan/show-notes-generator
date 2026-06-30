@@ -13,6 +13,14 @@ function parseLinks(text) {
   return text.split(/[\n,]+/).map((l) => l.trim()).filter((l) => l.match(/^https?:\/\//));
 }
 
+function fmtDate(dateStr, style) {
+  if (!dateStr) return "";
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const local = new Date(y, m - 1, d);
+  if (style === "long") return local.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  return local.toLocaleDateString();
+}
+
 const ENV_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY || "";
 
 /* ─── Component ─── */
@@ -563,7 +571,7 @@ export default function ShowNotesGenerator() {
                     {podcastName && <span>{podcastName}</span>}
                     {podcastName && episodeNumber && <span> · Ep. {episodeNumber}</span>}
                     {episodeTitle && <span> — {episodeTitle}</span>}
-                    {episodeDate && <span> · {new Date(episodeDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>}
+                    {episodeDate && <span> · {fmtDate(episodeDate, "long")}</span>}
                     {suggestedTags.length > 0 && (
                       <div className="suggested-tags-row">
                         {suggestedTags.map((tag) => (
@@ -730,7 +738,7 @@ export default function ShowNotesGenerator() {
                             {isActive && <span className="episode-active-badge">● active</span>}
                           </div>
                           <div className="episode-card-meta">
-                            {ep.slug}{ep.date ? ` · ${new Date(ep.date).toLocaleDateString()}` : ""}{ep.links?.length ? ` · ${ep.links.length} link${ep.links.length !== 1 ? "s" : ""}` : ""}
+                            {ep.slug}{ep.date ? ` · ${fmtDate(ep.date)}` : ""}{ep.links?.length ? ` · ${ep.links.length} link${ep.links.length !== 1 ? "s" : ""}` : ""}
                           </div>
                         </div>
                         <div className="episode-card-actions">
@@ -829,7 +837,7 @@ export default function ShowNotesGenerator() {
                             {label || "Untitled Episode"}
                           </div>
                           <div className="episode-card-meta">
-                            {ep.slug}{ep.date ? ` · ${new Date(ep.date).toLocaleDateString()}` : ""}{ep.links?.length ? ` · ${ep.links.length} link${ep.links.length !== 1 ? "s" : ""}` : ""}
+                            {ep.slug}{ep.date ? ` · ${fmtDate(ep.date)}` : ""}{ep.links?.length ? ` · ${ep.links.length} link${ep.links.length !== 1 ? "s" : ""}` : ""}
                           </div>
                         </div>
                         <div className="episode-card-actions">
