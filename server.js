@@ -200,35 +200,89 @@ app.delete('/api/episodes/:slug', async (req, res) => {
 
 app.post('/api/episodes/:slug/sync-to-craft', async (req, res) => {
   try {
-    const content = await fs.readFile(episodePath(req.params.slug), 'utf-8');
-    const ep = parseEpisodeFile(content, req.params.slug);
-    ep.items = await loadItems(req.params.slug);
+    const slug = req.params.slug;
+    const content = await fs.readFile(episodePath(slug), 'utf-8');
+    const ep = parseEpisodeFile(content, slug);
+    ep.items = await loadItems(slug);
+    const slugMarker = `[${slug}]`;
     const docTitle = ep.podcast ? `${ep.podcast}${ep.number ? ` · Ep. ${ep.number}` : ''}${ep.title ? `: ${ep.title}` : ''}` : `Show Notes ${ep.number ? `#${ep.number}` : ''}`;
+    const escapedTitle = docTitle.replace(/"/g, '\\"');
+    const bodyMarkdown = ep.body;
 
-    const createResult = await callCraftMCP('tools/call', {
-      name: 'craft_write',
-      arguments: { command: `documents create --title "${docTitle.replace(/"/g, '\\"')}" --folder ${CRAFT_PODCAST_FOLDER}` }
+    // Step 1: List existing docs in the folder to find an existing one by slug marker
+    const listResult = await callCraftMCP('tools/call', {
+      name: 'craft_read',
+      arguments: { command: `documents list --folder ${CRAFT_PODCAST_FOLDER}` }
     });
 
-    if (!createResult) {
+    if (!listResult) {
       return res.status(500).json({ error: 'Craft sync failed: no API key configured' });
     }
 
-    const contentText = createResult?.result?.content?.[0]?.text || '';
-    const rootMatch = contentText.match(/rootBlockId: (\S+)/);
-    if (!rootMatch) {
-      console.error('Craft create response:', contentText);
-      return res.status(500).json({ error: 'Could not parse Craft response', raw: contentText });
+    const listText = listResult?.result?.content?.[0]?.text || '';
+    let existingDocId = null;
+    const docLines = listText.split('\n');
+    for (const line of docLines) {
+      const match = line.match(/<(\S+)>\s+(.+)/);
+      if (match && match[2].includes(slugMarker)) {
+        existingDocId = match[1];
+        break;
+      }
     }
 
-    const rootBlockId = rootMatch[1];
-    const bodyMarkdown = ep.body;
-    await callCraftMCP('tools/call', {
-      name: 'craft_write',
-      arguments: { command: `blocks add --id ${rootBlockId} --markdown "${bodyMarkdown.replace(/"/g, '\\"')}"` }
-    });
+    if (existingDocId) {
+      // Update existing document: read children, delete them, add new content
+      const getResult = await callCraftMCP('tools/call', {
+        name: 'craft_read',
+        arguments: { command: `blocks get ${existingDocId} --depth 1 --format json` }
+      });
 
-    res.json({ success: true, docTitle, rootBlockId });
+      const getText = getResult?.result?.content?.[0]?.text || '';
+      const blockIds = getText.match(/"[^"]*blockId[^"]*":\s*"([^"]+)"/g)?.map(s => {
+        const m = s.match(/"([^"]+)"/);
+        return m ? m[1] : null;
+      }).filter(id => id && id !== existingDocId) || [];
+
+      for (const bid of blockIds) {
+        await callCraftMCP('tools/call', {
+          name: 'craft_write',
+          arguments: { command: `blocks delete --id ${bid}` }
+        });
+      }
+
+      // Add new content
+      if (bodyMarkdown) {
+        await callCraftMCP('tools/call', {
+          name: 'craft_write',
+          arguments: { command: `blocks add --id ${existingDocId} --markdown "${bodyMarkdown.replace(/"/g, '\\"')}"` }
+        });
+      }
+
+      res.json({ success: true, action: 'updated', docTitle, rootBlockId: existingDocId });
+    } else {
+      // Create new document with slug marker in title
+      const createResult = await callCraftMCP('tools/call', {
+        name: 'craft_write',
+        arguments: { command: `documents create --title "${escapedTitle} ${slugMarker}" --folder ${CRAFT_PODCAST_FOLDER}` }
+      });
+
+      const contentText = createResult?.result?.content?.[0]?.text || '';
+      const rootMatch = contentText.match(/rootBlockId: (\S+)/);
+      if (!rootMatch) {
+        console.error('Craft create response:', contentText);
+        return res.status(500).json({ error: 'Could not parse Craft response', raw: contentText });
+      }
+
+      const rootBlockId = rootMatch[1];
+      if (bodyMarkdown) {
+        await callCraftMCP('tools/call', {
+          name: 'craft_write',
+          arguments: { command: `blocks add --id ${rootBlockId} --markdown "${bodyMarkdown.replace(/"/g, '\\"')}"` }
+        });
+      }
+
+      res.json({ success: true, action: 'created', docTitle, rootBlockId });
+    }
   } catch (err) {
     res.status(500).json({ error: `Craft sync failed: ${err.message}` });
   }

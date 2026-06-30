@@ -236,7 +236,6 @@ export default function ShowNotesGenerator() {
         linksText,
       });
       setCurrentEpisodeSlug(result.slug);
-      await loadEpisodes();
       return result;
     } catch (e) {
       console.error("Save draft failed:", e);
