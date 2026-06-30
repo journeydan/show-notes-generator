@@ -386,18 +386,30 @@ export default function ShowNotesGenerator() {
 
       // Parse markdown into items
       const parsedItems = [];
-      const blocks = mdText.split("\n## ");
+
+      // Extract content between <content> tags and strip leading whitespace
+      const contentMatch = mdText.match(/<content>([\s\S]*?)<\/content>/);
+      const bodyText = contentMatch ? contentMatch[1].trim() : mdText;
+
+      const blocks = bodyText.split(/\n## /);
       for (const block of blocks) {
         if (!block.trim()) continue;
-        const lines = block.split("\n");
+        const lines = block.split("\n").map(l => l.trim()).filter(l => l);
         const title = lines[0].replace(/^\d+\.\s*/, "").trim();
         let url = "", summary = "", tags = [];
+
         for (const l of lines) {
-          const urlMatch = l.match(/🔗\s*(https?:\/\/\S+)/);
-          if (urlMatch) url = urlMatch[1];
+          // URL: handle bare URL or markdown link format
+          const bareUrl = l.match(/🔗\s*(https?:\/\/\S+)/);
+          const mdLink = l.match(/🔗\s*\[(.+?)\]\((https?:\/\/\S+?)\)/);
+          if (mdLink) url = mdLink[2];
+          else if (bareUrl) url = bareUrl[1];
+
           const tagMatch = l.match(/\*Tags:\s*(.+)\*/);
           if (tagMatch) tags = tagMatch[1].split(",").map(t => t.trim());
-          if (!l.startsWith("#") && !l.startsWith("🔗") && !l.startsWith("*Tags:") && !l.startsWith("*") && l.trim() && !urlMatch && !tagMatch) {
+
+          // Summary: first non-header, non-URL, non-tag line
+          if (!l.startsWith("#") && !l.startsWith("🔗") && !l.startsWith("*Tags:") && !l.startsWith("*") && !tagMatch && !summary) {
             summary = l.trim();
           }
         }
