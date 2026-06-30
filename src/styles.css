@@ -203,20 +203,6 @@ textarea::placeholder { color: #3A3A3A; }
 .btn-craft:hover { color: #fff; border-color: #fff; }
 .btn-craft:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.btn-ghost {
-  background: transparent;
-  color: #666;
-  border: none;
-  font-family: 'DM Mono', monospace;
-  font-size: 11px;
-  cursor: pointer;
-  padding: 6px 10px;
-  border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
-}
-
-.btn-ghost:hover { color: #F0F0F0; background: #1A1A1A; }
-
 .btn-small {
   background: transparent;
   color: #666;
@@ -481,19 +467,6 @@ a.item-url:hover { opacity: 1; text-decoration: underline; }
   margin-bottom: 10px;
 }
 
-.tag-edit-input {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid #2A2A2A;
-  color: #F0F0F0;
-  font-family: 'DM Mono', monospace;
-  font-size: 12px;
-  padding: 4px 0;
-  outline: none;
-  width: 100%;
-  margin-top: 8px;
-}
-
 .edit-field {
   width: 100%;
   background: #1A1A1A;
@@ -537,50 +510,9 @@ a.item-url:hover { opacity: 1; text-decoration: underline; }
   animation: fadeSlide 0.2s ease forwards;
 }
 
-.duplicate-warning {
-  font-family: 'DM Mono', monospace;
-  font-size: 11px;
-  color: #FFA500;
-  margin-top: 4px;
-}
-
-.inline-tag {
-  display: inline-block;
-  background: #1E1E1E;
-  border: 1px solid #2A2A2A;
-  color: #666;
-  font-family: 'DM Mono', monospace;
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  margin-right: 4px;
-  margin-bottom: 4px;
-}
-
-.inline-tag.clickable { cursor: pointer; }
-.inline-tag.clickable:hover { border-color: #FF6B6B88; color: #FF6B6B; }
-
-.suggested-tags-area {
-  margin-top: 12px;
-  padding: 12px 16px;
-  background: #1A1A1A;
-  border: 1px solid #2A2A2A;
-  border-radius: 8px;
-  animation: fadeSlide 0.3s ease forwards;
-}
-
 .tag-suggested { cursor: pointer; border-color: #E8FF4744; }
 .suggested-tags-row { margin-top: 8px; }
 .card-tags { margin-top: 14px; }
-
-.suggested-tags-area .label {
-  font-family: 'DM Mono', monospace;
-  font-size: 10px;
-  text-transform: uppercase;
-  color: #666;
-  margin-bottom: 8px;
-  letter-spacing: 0.1em;
-}
 
 .duplicate-badge {
   font-family: 'DM Mono', monospace;
@@ -754,16 +686,6 @@ a.item-url:hover { opacity: 1; text-decoration: underline; }
   font-size: 13px;
   color: #666;
   padding: 8px 0;
-}
-
-.episodes-clear-all {
-  background: none;
-  border: none;
-  color: #666;
-  font-size: 11px;
-  cursor: pointer;
-  align-self: flex-end;
-  padding: 4px 0;
 }
 
 .rss-input-row {
