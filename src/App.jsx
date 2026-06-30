@@ -69,6 +69,8 @@ export default function ShowNotesGenerator() {
   const [syncMessage, setSyncMessage] = useState("");
   const [pulling, setPulling] = useState(false);
   const [hydrating, setHydrating] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [episodesLoading, setEpisodesLoading] = useState(false);
 
   const itemsRef = useRef([]);
   const syncTimerRef = useRef(null);
@@ -110,12 +112,16 @@ export default function ShowNotesGenerator() {
 
   /* ─── Episode loading ─── */
   const loadEpisodes = async () => {
+    setEpisodesLoading(true);
     try {
       const data = await fetchEpisodeList();
       setEpisodes(data);
+      setLoadError("");
     } catch (e) {
       console.error("Failed to load episodes:", e);
+      setLoadError("Could not load episode list — server may not be running");
     }
+    setEpisodesLoading(false);
   };
 
   useEffect(() => {
@@ -633,6 +639,12 @@ export default function ShowNotesGenerator() {
           </div>
         )}
 
+        {loadError && (
+          <div className="api-key-banner" style={{ borderColor: "#ff444480", color: "#ff444499" }}>
+            <span>⚠ {loadError}</span>
+          </div>
+        )}
+
         {/* Config */}
         <div className="config-row">
           <div className="config-field">
@@ -1106,7 +1118,10 @@ export default function ShowNotesGenerator() {
               </div>
             )}
 
-            {episodes.length === 0 && (
+            {episodesLoading && (
+              <div className="episodes-empty">Loading episodes…</div>
+            )}
+            {!episodesLoading && episodes.length === 0 && (
               <div className="episodes-empty">No episodes yet. Save a draft or generate to get started.</div>
             )}
           </div>
