@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { formatMarkdown, formatNewsletter, formatHTML, formatSocialThread } from "./formatters.js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -73,6 +73,7 @@ export default function ShowNotesGenerator() {
   const itemsRef = useRef([]);
   const syncTimerRef = useRef(null);
   const initialized = useRef(false);
+  const mcpInitialized = useRef(false);
 
   function setSyncMessageWithTimeout(msg, duration = 3000) {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
@@ -246,10 +247,13 @@ export default function ShowNotesGenerator() {
   async function callMCP(method, params) {
     const headers = { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" };
     if (craftKey) headers["Authorization"] = `Bearer ${craftKey}`;
-    // Always initialize first (stateless calls)
-    await fetch(CRAFT_MCP_URL, { method: "POST", headers,
-      body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "ShowNotesGen", version: "1.0" } }, id: 1 })
-    });
+    // Initialize once per session, not on every call
+    if (!mcpInitialized.current) {
+      await fetch(CRAFT_MCP_URL, { method: "POST", headers,
+        body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "ShowNotesGen", version: "1.0" } }, id: 1 })
+      });
+      mcpInitialized.current = true;
+    }
     const resp = await fetch(CRAFT_MCP_URL, { method: "POST", headers,
       body: JSON.stringify({ jsonrpc: "2.0", method, id: 2, params })
     });
@@ -588,6 +592,9 @@ export default function ShowNotesGenerator() {
       ? DOMPurify.sanitize(marked.parse(outputText))
       : null;
 
+  const draftEpisodes = useMemo(() => episodes.filter(e => !doneSlugs.includes(e.slug)), [episodes, doneSlugs]);
+  const archivedEpisodes = useMemo(() => episodes.filter(e => doneSlugs.includes(e.slug)), [episodes, doneSlugs]);
+
   if (hydrating) {
     return (
       <div className="app" style={{ textAlign: "center", padding: "80px 24px" }}>
@@ -895,7 +902,7 @@ export default function ShowNotesGenerator() {
           className={episodes.length > 0 ? "episodes-toggle" : "episodes-toggle empty"}
         >
           <span className="chevron">{showEpisodes ? "▲" : "▼"}</span>
-          Episodes {episodes.length > 0 ? `(${episodes.filter(e => !doneSlugs.includes(e.slug)).length} draft · ${episodes.filter(e => doneSlugs.includes(e.slug)).length} done)` : ""}
+          Episodes {episodes.length > 0 ? `(${draftEpisodes.length} draft · ${archivedEpisodes.length} done)` : ""}
         </button>
 
         {showEpisodes && (
@@ -936,11 +943,11 @@ export default function ShowNotesGenerator() {
             </button>
 
             {/* Drafts section */}
-            {episodes.some(e => !doneSlugs.includes(e.slug)) && (
+            {draftEpisodes.length > 0 && (
               <div>
                 <div className="episodes-section-label">In Progress</div>
                 <div className="episodes-list">
-                  {episodes.filter(e => !doneSlugs.includes(e.slug)).map((ep) => {
+                  {draftEpisodes.map((ep) => {
                     const label = [ep.podcast, ep.number && `Ep. ${ep.number}`, ep.title].filter(Boolean).join(" · ");
                     const isActive = ep.slug === currentEpisodeSlug;
                     return (
@@ -1037,11 +1044,11 @@ export default function ShowNotesGenerator() {
             )}
 
             {/* Archive section */}
-            {episodes.some(e => doneSlugs.includes(e.slug)) && (
+            {archivedEpisodes.length > 0 && (
               <div>
                 <div className="episodes-section-label">Archive</div>
                 <div className="episodes-list">
-                  {episodes.filter(e => doneSlugs.includes(e.slug)).map((ep) => {
+                  {archivedEpisodes.map((ep) => {
                     const label = [ep.podcast, ep.number && `Ep. ${ep.number}`, ep.title].filter(Boolean).join(" · ");
                     return (
                       <div key={ep.slug} className="episode-card done">
