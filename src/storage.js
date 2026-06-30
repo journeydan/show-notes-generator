@@ -28,37 +28,125 @@ export function getCacheKey(url, customPrompt) {
   return `${url}|${customPrompt || "default"}`;
 }
 
-// ─── File-based episode API ───
+// ─── localStorage episode storage (fallback & dual-save) ───
+const EPISODES_LOCAL_KEY = "show-notes-local-episodes";
+
+function nextEpisodeNumber() {
+  try {
+    const raw = localStorage.getItem(EPISODES_LOCAL_KEY);
+    const episodes = raw ? JSON.parse(raw) : [];
+    let max = 0;
+    for (const ep of episodes) {
+      const n = parseInt(ep.slug?.replace("episode-", "")) || 0;
+      if (n > max) max = n;
+    }
+    return max + 1;
+  } catch { return 1; }
+}
+
+function episodeSlug(num) {
+  return `episode-${String(num).padStart(3, "0")}`;
+}
+
+function loadLocalEpisodes() {
+  try {
+    const raw = localStorage.getItem(EPISODES_LOCAL_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveLocalEpisodes(episodes) {
+  try { localStorage.setItem(EPISODES_LOCAL_KEY, JSON.stringify(episodes)); } catch {}
+}
+
+// ─── File-based episode API (with localStorage fallback) ───
 
 const API_BASE = "/api/episodes";
 
+async function tryAPI(url, options) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(url, { ...options, signal: controller.signal, cache: "no-store" });
+    clearTimeout(timeout);
+    if (res.ok) return { ok: true, data: await res.json() };
+    return { ok: false, error: `Status ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 export async function fetchEpisodeList() {
-  const res = await fetch(API_BASE);
-  if (!res.ok) throw new Error(`Failed to fetch episodes: ${res.status}`);
-  return res.json();
+  // Try API first
+  const api = await tryAPI(API_BASE);
+  if (api.ok) {
+    // Merge with localStorage episodes (API takes precedence)
+    const local = loadLocalEpisodes();
+    if (local.length > 0) {
+      const apiSlugs = new Set(api.data.map(e => e.slug));
+      const merged = [...api.data, ...local.filter(e => !apiSlugs.has(e.slug))];
+      return merged;
+    }
+    return api.data;
+  }
+  // Fall back to localStorage
+  console.warn("API unavailable, using localStorage episodes");
+  return loadLocalEpisodes();
 }
 
 export async function fetchEpisode(slug) {
-  const res = await fetch(`${API_BASE}/${encodeURIComponent(slug)}`);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Failed to fetch episode: ${res.status}`);
-  return res.json();
+  // Try API first
+  const api = await tryAPI(`${API_BASE}/${encodeURIComponent(slug)}`);
+  if (api.ok) return api.data;
+  // Fall back to localStorage
+  const local = loadLocalEpisodes();
+  return local.find(e => e.slug === slug) || null;
 }
 
 export async function saveEpisode(data) {
-  const res = await fetch(API_BASE, {
+  const now = new Date().toISOString();
+  const slug = episodeSlug(data.number || nextEpisodeNumber());
+  const episode = {
+    slug,
+    number: data.number || "",
+    title: data.title || "",
+    podcast: data.podcast || "",
+    date: data.date || "",
+    body: "",
+    items: data.items || [],
+    links: (data.items || []).map(i => i.url).filter(Boolean),
+    _updated: now,
+  };
+
+  // Save to API
+  const api = await tryAPI(API_BASE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`Failed to save episode: ${res.status}`);
-  return res.json();
+  if (api.ok) return api.data;
+
+  // Fallback: save to localStorage
+  console.warn("API unavailable, saving episode to localStorage");
+  const episodes = loadLocalEpisodes();
+  const idx = episodes.findIndex(e => e.slug === slug);
+  if (idx >= 0) {
+    episodes[idx] = { ...episodes[idx], ...episode };
+  } else {
+    episodes.unshift(episode);
+  }
+  saveLocalEpisodes(episodes.slice(0, 100));
+  return episode;
 }
 
 export async function deleteEpisode(slug) {
-  const res = await fetch(`${API_BASE}/${encodeURIComponent(slug)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error(`Failed to delete episode: ${res.status}`);
-  return res.json();
+  // Try API
+  const api = await tryAPI(`${API_BASE}/${encodeURIComponent(slug)}`, { method: "DELETE" });
+  if (api.ok) return api.data;
+
+  // Fallback: delete from localStorage
+  console.warn("API unavailable, deleting from localStorage");
+  const episodes = loadLocalEpisodes().filter(e => e.slug !== slug);
+  saveLocalEpisodes(episodes);
+  return { deleted: slug };
 }

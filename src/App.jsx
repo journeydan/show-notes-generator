@@ -681,7 +681,21 @@ export default function ShowNotesGenerator() {
             <button
               className="btn-primary episodes-new-btn"
               onClick={async () => {
-                await handleSaveDraft();
+                const hadContent = episodeTitle || episodeNumber || items.length > 0 || linksText.trim();
+                if (hadContent) {
+                  // Save to localStorage as fallback first
+                  saveState({ podcastName, episodeTitle, episodeNumber, episodeDate, showSponsor, sponsorText, customPrompt, showCustomPrompt, items });
+                  try {
+                    await handleSaveDraft();
+                    // Mark as done so it appears in Archive
+                    if (currentEpisodeSlug) {
+                      setDoneSlugs(prev => prev.includes(currentEpisodeSlug) ? prev : [...prev, currentEpisodeSlug]);
+                    }
+                    await loadEpisodes();
+                  } catch (e) {
+                    console.error("Save failed, but data preserved in localStorage:", e);
+                  }
+                }
                 setEpisodeTitle("");
                 setEpisodeNumber("");
                 setEpisodeDate("");
@@ -690,6 +704,8 @@ export default function ShowNotesGenerator() {
                 setLinksText("");
                 setSponsorText("");
                 setShowSponsor(false);
+                setCurrentEpisodeSlug(null);
+                setShowEpisodes(true);
               }}
             >
               + New Episode
