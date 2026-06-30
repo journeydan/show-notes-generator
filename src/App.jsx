@@ -22,10 +22,14 @@ function fmtDate(dateStr, style) {
 }
 
 const ENV_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY || "";
+const ENV_CRAFT_KEY = import.meta.env.VITE_CRAFT_API_KEY || "";
+const CRAFT_MCP_URL = "https://mcp.craft.do/links/7foILXddSEb/mcp";
+const CRAFT_FOLDER = "9477946A-1CFA-454B-BDAC-7C9E0970EB61";
 
 /* ─── Component ─── */
 export default function ShowNotesGenerator() {
   const [apiKey, setApiKey] = useState(ENV_API_KEY);
+  const [craftKey, setCraftKey] = useState(() => localStorage.getItem("craft-api-key") || ENV_CRAFT_KEY);
   const [podcastName, setPodcastName] = useState("Old's Cool");
   const [episodeTitle, setEpisodeTitle] = useState("");
   const [episodeNumber, setEpisodeNumber] = useState("");
@@ -229,11 +233,12 @@ export default function ShowNotesGenerator() {
   };
 
   async function handleSyncToCraft() {
+    if (!craftKey) { setSyncMessage("Set Craft API key first"); setTimeout(() => setSyncMessage(""), 3000); return; }
     setSyncing(true);
     setSyncMessage("");
     try {
       const result = await saveEpisode({
-        number: episodeNumber,
+        number: episodeNumber || (currentEpisodeSlug ? currentEpisodeSlug.replace("episode-", "") : ""),
         title: episodeTitle,
         podcast: podcastName,
         date: episodeDate,
@@ -242,14 +247,65 @@ export default function ShowNotesGenerator() {
         linksText,
       });
       const slug = result.slug;
-      setCurrentEpisodeSlug(slug);
-      const resp = await fetch("/api/episodes/" + slug + "/sync-to-craft", { method: "POST" });
-      if (!resp.ok) throw new Error("Sync failed");
+      const docTitle = [podcastName, episodeNumber ? `Ep. ${episodeNumber}` : "", episodeTitle].filter(Boolean).join(" · ") || slug;
+
+      // Build markdown body from items
+      const doneItems = (result.items || itemsRef.current || []).filter(i => i.status === "done");
+      const bodyMd = doneItems.map((item, i) =>
+        `## ${i + 1}. ${item.title}\n\n🔗 ${item.url}\n\n${item.summary}\n` + (item.tags?.length ? `\n*Tags: ${item.tags.join(", ")}*\n` : "")
+      ).join("\n");
+
+      const headers = { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" };
+      if (craftKey) headers["Authorization"] = `Bearer ${craftKey}`;
+
+      // Step 1: Initialize MCP session
+      const initResp = await fetch(CRAFT_MCP_URL, {
+        method: "POST", headers,
+        body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "ShowNotesGen", version: "1.0" } }, id: 1 })
+      });
+      const initText = await initResp.text();
+      // Parse SSE response
+      let initData = null;
+      for (const line of initText.split("\n")) {
+        if (line.startsWith("data: ")) { initData = JSON.parse(line.slice(6)); break; }
+      }
+      if (!initData || initData.error) throw new Error(initData?.error?.message || "MCP init failed");
+
+      // Step 2: Create document
+      const createResp = await fetch(CRAFT_MCP_URL, {
+        method: "POST", headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0", method: "tools/call", id: 2,
+          params: { name: "craft_write", arguments: { command: `documents create --title "${docTitle.replace(/"/g, '\\"')}" --folder ${CRAFT_FOLDER}` } }
+        })
+      });
+      const createText = await createResp.text();
+      let createData = null;
+      for (const line of createText.split("\n")) {
+        if (line.startsWith("data: ")) { createData = JSON.parse(line.slice(6)); break; }
+      }
+      const contentText = createData?.result?.content?.[0]?.text || "";
+      const rootMatch = contentText.match(/rootBlockId: (\S+)/);
+      if (!rootMatch) throw new Error("Could not create document: " + contentText);
+      const rootId = rootMatch[1];
+
+      // Step 3: Add blocks
+      if (bodyMd) {
+        await fetch(CRAFT_MCP_URL, {
+          method: "POST", headers,
+          body: JSON.stringify({
+            jsonrpc: "2.0", method: "tools/call", id: 3,
+            params: { name: "craft_write", arguments: { command: `blocks add --id ${rootId} --markdown "${bodyMd.replace(/"/g, '\\"')}"` } }
+          })
+        });
+      }
+
       setSyncMessage("Synced to Craft!");
       setTimeout(() => setSyncMessage(""), 3000);
     } catch (e) {
-      setSyncMessage("Sync failed");
-      setTimeout(() => setSyncMessage(""), 3000);
+      console.error("Craft sync error:", e);
+      setSyncMessage("Sync failed: " + e.message);
+      setTimeout(() => setSyncMessage(""), 4000);
     }
     setSyncing(false);
   }
@@ -415,6 +471,15 @@ export default function ShowNotesGenerator() {
           <div className="api-key-banner">
             <span>API KEY</span>
             <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-..." />
+          </div>
+        )}
+        {!ENV_CRAFT_KEY && !craftKey && (
+          <div className="api-key-banner" style={{ borderColor: "#E8FF4780" }}>
+            <span>CRAFT KEY</span>
+            <input type="password" value={craftKey} onChange={(e) => {
+              setCraftKey(e.target.value);
+              if (e.target.value) localStorage.setItem("craft-api-key", e.target.value);
+            }} placeholder="pdk_..." />
           </div>
         )}
 
