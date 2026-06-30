@@ -113,6 +113,29 @@ async function callCraftMCP(method, params) {
   return null;
 }
 
+// ─── Proxy for Anthropic ───
+
+app.post("/api/anthropic/messages", express.json({ limit: "5mb" }), async (req, res) => {
+  try {
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (!anthropicKey) return res.status(400).json({ error: "ANTHROPIC_API_KEY not set on server" });
+
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(req.body),
+    });
+    const data = await resp.json();
+    res.status(resp.status).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── API Routes ───
 
 app.get('/api/episodes', async (req, res) => {

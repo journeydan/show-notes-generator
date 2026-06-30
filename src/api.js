@@ -2,6 +2,29 @@ function extractDomain(url) {
   try { return new URL(url).hostname; } catch { return url; }
 }
 
+async function callAnthropic(body, apiKey) {
+  // Try proxy first (local dev with server running)
+  try {
+    const resp = await fetch("/api/anthropic/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (resp.ok) return await resp.json();
+  } catch {}
+  // Fallback: direct API call from browser
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify(body),
+  });
+  return await resp.json();
+}
+
 export async function summarizeLink(url, podcastName, episodeTitle, apiKey, customPrompt) {
   const systemPrompt = customPrompt ||
     `You are a research assistant for a podcast called "${podcastName || 'the podcast'}".
@@ -19,32 +42,18 @@ Return a JSON object with exactly these fields:
 
 Only return valid JSON, no markdown, no preamble.`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: systemPrompt }],
-    }),
-  });
+  const response = await callAnthropic({
+    model: "claude-sonnet-4-6",
+    max_tokens: 1000,
+    tools: [{ type: "web_search_20250305", name: "web_search" }],
+    messages: [{ role: "user", content: systemPrompt }],
+  }, apiKey);
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `API error ${response.status}`);
-  }
+  const text = response.content
+    ? response.content.filter((b) => b.type === "text").map((b) => b.text).join("")
+    : "";
 
-  const data = await response.json();
-  const text = data.content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("");
+  if (!text && response.error) throw new Error(response?.error?.message || `API error`);
 
   const clean = text.replace(/```json|```/g, "").trim();
   const jsonMatch = clean.match(/\{[\s\S]*\}/);
@@ -65,24 +74,14 @@ ${summaries}
 
 Return ONLY a JSON array of tag strings, no markdown, no preamble. Example: ["AI", "Technology", "Startups"]`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 300,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+  const response = await callAnthropic({
+    model: "claude-sonnet-4-6",
+    max_tokens: 300,
+    messages: [{ role: "user", content: prompt }],
+  }, apiKey);
 
-  if (!response.ok) return [];
-  const data = await response.json();
-  const text = data.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+  if (response.error) return [];
+  const text = response.content?.filter((b) => b.type === "text").map((b) => b.text).join("") || "";
   const clean = text.replace(/```json|```/g, "").trim();
   try { return JSON.parse(clean); } catch { return []; }
 }

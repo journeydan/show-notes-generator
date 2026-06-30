@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { formatMarkdown, formatNewsletter, formatHTML, formatSocialThread } from "./formatters.js";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { loadState, saveState, loadCache, saveCache, fetchEpisodeList, fetchEpisode, saveEpisode, deleteEpisode, getCacheKey } from "./storage.js";
 import { summarizeLink, suggestCrossTags, fetchRSSTitles } from "./api.js";
 
@@ -579,20 +581,7 @@ export default function ShowNotesGenerator() {
   const renderedHTML = outputFormat === "html"
     ? outputText
     : outputFormat === "markdown"
-      ? `<div style="font-family:Georgia,serif;color:${TEXT};line-height:1.7;">${outputText
-          .replace(/^### (.+)$/gm, "<h3>$1</h3>")
-          .replace(/^## (.+)$/gm, "<h2>$1</h2>")
-          .replace(/^# (.+)$/gm, "<h1>$1</h1>")
-          .replace(/^---$/gm, "<hr>")
-          .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-          .replace(/\*(.+?)\*/g, "<em>$1</em>")
-          .replace(/\n\n/g, "</p><p>")
-          .replace(/^(.+)$/gm, (m) => {
-            if (m.startsWith("<h") || m.startsWith("<hr")) return m;
-            // Links
-            return m.replace(/🔗 (.+)/g, '<a href="$1" style="color:' + ACCENT + '">$1</a>');
-          })
-        }</p>`
+      ? DOMPurify.sanitize(marked.parse(outputText))
       : null;
 
   return (
