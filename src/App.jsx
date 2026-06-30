@@ -51,6 +51,8 @@ export default function ShowNotesGenerator() {
       return raw ? JSON.parse(raw) : [];
     } catch { return []; }
   });
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
 
   const itemsRef = useRef([]);
   const initialized = useRef(false);
@@ -215,6 +217,32 @@ export default function ShowNotesGenerator() {
       console.error("Save draft failed:", e);
     }
   };
+
+  async function handleSyncToCraft() {
+    setSyncing(true);
+    setSyncMessage("");
+    try {
+      const result = await saveEpisode({
+        number: episodeNumber,
+        title: episodeTitle,
+        podcast: podcastName,
+        date: episodeDate,
+        items: itemsRef.current,
+        sponsorText,
+        linksText,
+      });
+      const slug = result.slug;
+      setCurrentEpisodeSlug(slug);
+      const resp = await fetch("/api/episodes/" + slug + "/sync-to-craft", { method: "POST" });
+      if (!resp.ok) throw new Error("Sync failed");
+      setSyncMessage("Synced to Craft!");
+      setTimeout(() => setSyncMessage(""), 3000);
+    } catch (e) {
+      setSyncMessage("Sync failed");
+      setTimeout(() => setSyncMessage(""), 3000);
+    }
+    setSyncing(false);
+  }
 
   const handleCopy = () => {
     navigator.clipboard.writeText(outputText);
@@ -494,6 +522,11 @@ export default function ShowNotesGenerator() {
               {currentEpisodeSlug ? "↑ Update Draft" : "Save Draft"}
             </button>
           )}
+          {(items.length > 0 || linksText.trim()) && !isRunning && (
+            <button className="btn-craft" onClick={handleSyncToCraft} disabled={syncing}>
+              {syncing ? "Syncing…" : syncMessage || "Sync to Craft"}
+            </button>
+          )}
           {items.length > 0 && !isRunning && (
             <button className="btn-secondary" onClick={handleClear}>Clear All</button>
           )}
@@ -647,9 +680,8 @@ export default function ShowNotesGenerator() {
 
             <button
               className="btn-primary episodes-new-btn"
-              onClick={() => {
-                // Save current draft first if there's a slug
-                if (currentEpisodeSlug) handleSaveDraft();
+              onClick={async () => {
+                await handleSaveDraft();
                 setEpisodeTitle("");
                 setEpisodeNumber("");
                 setEpisodeDate("");
@@ -658,7 +690,6 @@ export default function ShowNotesGenerator() {
                 setLinksText("");
                 setSponsorText("");
                 setShowSponsor(false);
-                setCurrentEpisodeSlug(null);
               }}
             >
               + New Episode
@@ -705,8 +736,14 @@ export default function ShowNotesGenerator() {
                               setEpisodeTitle(ep.title || "");
                               setEpisodeNumber(ep.number || "");
                               setEpisodeDate(ep.date || "");
-                              setItems([]);
-                              itemsRef.current = [];
+                              const epData = await fetchEpisode(ep.slug);
+                              if (epData && epData.items && epData.items.length > 0) {
+                                setItems(epData.items);
+                                itemsRef.current = epData.items;
+                              } else {
+                                setItems([]);
+                                itemsRef.current = [];
+                              }
                               setLinksText("");
                               setCurrentEpisodeSlug(ep.slug);
                               setActiveTab("cards");
@@ -778,13 +815,19 @@ export default function ShowNotesGenerator() {
                         </div>
                         <div className="episode-card-actions">
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               setPodcastName(ep.podcast || podcastName);
                               setEpisodeTitle(ep.title || "");
                               setEpisodeNumber(ep.number || "");
                               setEpisodeDate(ep.date || "");
-                              setItems([]);
-                              itemsRef.current = [];
+                              const epData = await fetchEpisode(ep.slug);
+                              if (epData && epData.items && epData.items.length > 0) {
+                                setItems(epData.items);
+                                itemsRef.current = epData.items;
+                              } else {
+                                setItems([]);
+                                itemsRef.current = [];
+                              }
                               setLinksText("");
                               setCurrentEpisodeSlug(ep.slug);
                               setActiveTab("cards");

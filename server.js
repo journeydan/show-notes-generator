@@ -50,7 +50,11 @@ function parseEpisodeFile(content, slug) {
   const urlRegex = /https?:\/\/[^\s\n)]+/g;
   let match;
   while ((match = urlRegex.exec(body)) !== null) links.push(match[0]);
-  return { slug, number: frontmatter.episode || '', title: frontmatter.title || '', podcast: frontmatter.podcast || '', date: frontmatter.date || '', links, body };
+  let items = [];
+  if (frontmatter.items_json) {
+    try { items = frontmatter.items_json.split('|||').map(s => JSON.parse(s)); } catch {}
+  }
+  return { slug, number: frontmatter.episode || '', title: frontmatter.title || '', podcast: frontmatter.podcast || '', date: frontmatter.date || '', links, body, items };
 }
 
 function buildEpisodeMarkdown({ number, title, podcast, date, items, sponsorText, linksText }) {
@@ -60,6 +64,7 @@ function buildEpisodeMarkdown({ number, title, podcast, date, items, sponsorText
   if (title) md += `title: "${title}"\n`;
   if (number) md += `episode: "${number}"\n`;
   if (date) md += `date: "${date}"\n`;
+  if (items?.length) md += `items_json: "${items.filter(i => i).map(i => ({url:i.url,title:i.title,summary:i.summary,tags:i.tags||[],status:i.status})).map(i => JSON.stringify(i).replace(/"/g, '\\"')).join('|||')}"\n`;
   md += '---\n\n';
   if (items?.length) {
     items.filter(i => i.status === 'done').forEach((item, i) => {
