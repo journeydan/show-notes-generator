@@ -58,3 +58,15 @@ show-notes-generator/
 - The API key is stored as an environment variable (`VITE_ANTHROPIC_API_KEY`) and never exposed in the UI when set this way.
 - If no env var is set, users will see an API key input field at the top of the app — useful for local/personal use.
 - The app uses Claude's web search tool to fetch and summarize each URL.
+
+## Craft Sync
+
+Episode files saved via the API can be synced to your Craft workspace:
+
+```bash
+# Episode files are auto-synced when saved through the app
+# Or trigger manually:
+curl -X POST http://localhost:3001/api/episodes/episode-010/sync-to-craft
+```
+
+Your Craft API key (`pdk_...`) lives in `craft_api_key.txt` at the project root (gitignored). Episodes are created in the **Podcast and Newsletter** folder in your Craft space.
