@@ -1,0 +1,827 @@
+import { useState, useRef, useEffect } from "react";
+import { formatMarkdown, formatNewsletter, formatHTML, formatSocialThread } from "./formatters.js";
+import { loadState, saveState, loadCache, saveCache, fetchEpisodeList, fetchEpisode, saveEpisode, deleteEpisode, getCacheKey } from "./storage.js";
+import { summarizeLink, suggestCrossTags, fetchRSSTitles } from "./api.js";
+
+/* ─── Constants ─── */
+const ACCENT = "#E8FF47";
+const TEXT = "#F0F0F0";
+
+const BATCH_SIZE = 3;
+
+function parseLinks(text) {
+  return text.split(/[\n,]+/).map((l) => l.trim()).filter((l) => l.match(/^https?:\/\//));
+}
+
+const ENV_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY || "";
+
+/* ─── Component ─── */
+export default function ShowNotesGenerator() {
+  const [apiKey, setApiKey] = useState(ENV_API_KEY);
+  const [podcastName, setPodcastName] = useState("Old's Cool");
+  const [episodeTitle, setEpisodeTitle] = useState("");
+  const [episodeNumber, setEpisodeNumber] = useState("");
+  const [episodeDate, setEpisodeDate] = useState("");
+  const [linksText, setLinksText] = useState("");
+  const [items, setItems] = useState([]);
+  const [isRunning, setIsRunning] = useState(false);
+  const [activeTab, setActiveTab] = useState("cards");
+  const [copied, setCopied] = useState(false);
+  const [outputFormat, setOutputFormat] = useState("markdown");
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [showCustomPrompt, setShowCustomPrompt] = useState(false);
+  const [rssUrl, setRssUrl] = useState("");
+  const [showRssImport, setShowRssImport] = useState(false);
+  const [importingRss, setImportingRss] = useState(false);
+  const [showSponsor, setShowSponsor] = useState(false);
+  const [sponsorText, setSponsorText] = useState("");
+  const [suggestingTags, setSuggestingTags] = useState(false);
+  const [suggestedTags, setSuggestedTags] = useState([]);
+  const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
+  const [editingIndex, setEditingIndex] = useState(-1);
+  const [editTitle, setEditTitle] = useState("");
+  const [editSummary, setEditSummary] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [episodes, setEpisodes] = useState([]);
+  const [showEpisodes, setShowEpisodes] = useState(false);
+  const [currentEpisodeSlug, setCurrentEpisodeSlug] = useState(null);
+  const [doneSlugs, setDoneSlugs] = useState(() => {
+    try {
+      const raw = localStorage.getItem("show-notes-done-slugs");
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+
+  const itemsRef = useRef([]);
+  const initialized = useRef(false);
+
+  /* ─── localStorage persistence ─── */
+  useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+    const saved = loadState();
+    if (saved) {
+      setPodcastName(saved.podcastName || "Old's Cool");
+      setEpisodeTitle(saved.episodeTitle || "");
+      setEpisodeNumber(saved.episodeNumber || "");
+      setEpisodeDate(saved.episodeDate || "");
+      setShowSponsor(saved.showSponsor || false);
+      setSponsorText(saved.sponsorText || "");
+      setCustomPrompt(saved.customPrompt || "");
+      setShowCustomPrompt(saved.showCustomPrompt || false);
+      if (saved.items?.length) {
+        setItems(saved.items);
+        itemsRef.current = saved.items;
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!initialized.current) return;
+    saveState({ podcastName, episodeTitle, episodeNumber, episodeDate, showSponsor, sponsorText, customPrompt, showCustomPrompt, items });
+  }, [podcastName, episodeTitle, episodeNumber, episodeDate, showSponsor, sponsorText, customPrompt, showCustomPrompt, items]);
+
+  /* ─── Episode loading ─── */
+  const loadEpisodes = async () => {
+    try {
+      const data = await fetchEpisodeList();
+      setEpisodes(data);
+    } catch (e) {
+      console.error("Failed to load episodes:", e);
+    }
+  };
+
+  useEffect(() => {
+    loadEpisodes();
+  }, []);
+
+  // Persist done slugs to localStorage
+  useEffect(() => {
+    localStorage.setItem("show-notes-done-slugs", JSON.stringify(doneSlugs));
+  }, [doneSlugs]);
+
+  /* ─── Derived ─── */
+  const doneItems = items.filter((i) => i.status === "done");
+  const progress = items.length ? Math.round((items.filter((i) => i.status !== "loading").length / items.length) * 100) : 0;
+  const links = parseLinks(linksText);
+  const existingUrls = new Set(items.map((i) => i.url));
+  const duplicateCount = links.filter((u) => existingUrls.has(u)).length;
+  const canGenerate = apiKey && links.length > 0 && !isRunning;
+
+  /* ─── Handlers ─── */
+
+  const handleGenerate = async () => {
+    if (!links.length || !apiKey) return;
+    const newLinks = links.filter((url) => !existingUrls.has(url));
+    if (!newLinks.length) return;
+    const newItems = newLinks.map((url) => ({ url, status: "loading", title: "", summary: "", tags: [] }));
+    const combined = [...itemsRef.current, ...newItems];
+    setItems(combined);
+    itemsRef.current = combined;
+    setIsRunning(true);
+    setActiveTab("cards");
+    setLinksText("");
+
+    const cache = loadCache();
+    const toFetch = [];
+
+    for (const url of newLinks) {
+      const key = getCacheKey(url, customPrompt);
+      if (cache[key]) {
+        const result = cache[key];
+        const updated = itemsRef.current.map((item) =>
+          item.url === url && item.status === "loading" ? { ...item, status: "done", ...result } : item
+        );
+        itemsRef.current = updated;
+        setItems([...updated]);
+      } else {
+        toFetch.push(url);
+      }
+    }
+
+    // Process uncached links in batches
+    for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
+      const batch = toFetch.slice(i, i + BATCH_SIZE);
+      await Promise.all(
+        batch.map(async (url) => {
+          try {
+            const result = await summarizeLink(url, podcastName, episodeTitle, apiKey, customPrompt);
+            const key = getCacheKey(url, customPrompt);
+            cache[key] = result;
+            saveCache(cache);
+            const updated = itemsRef.current.map((item) =>
+              item.url === url && item.status === "loading" ? { ...item, status: "done", ...result } : item
+            );
+            itemsRef.current = updated;
+            setItems([...updated]);
+          } catch (e) {
+            const updated = itemsRef.current.map((item) =>
+              item.url === url && item.status === "loading"
+                ? { ...item, status: "error", title: "Could not summarize", summary: e.message }
+                : item
+            );
+            itemsRef.current = updated;
+            setItems([...updated]);
+          }
+        })
+      );
+    }
+
+    setIsRunning(false);
+
+    // Auto-save/update episode draft after generation
+    const finalItems = itemsRef.current;
+    if (finalItems.some((i) => i.status === "done")) {
+      try {
+        const result = await saveEpisode({
+          number: episodeNumber,
+          title: episodeTitle,
+          podcast: podcastName,
+          date: episodeDate,
+          items: finalItems,
+          sponsorText,
+          linksText: "",
+        });
+        setCurrentEpisodeSlug(result.slug);
+        await loadEpisodes();
+      } catch (e) {
+        console.error("Auto-save failed:", e);
+      }
+    }
+  };
+
+  const handleClear = () => {
+    setItems([]);
+    setLinksText("");
+    itemsRef.current = [];
+    setSuggestedTags([]);
+    setCurrentEpisodeSlug(null);
+  };
+
+  const handleSaveDraft = async () => {
+    try {
+      const result = await saveEpisode({
+        number: episodeNumber,
+        title: episodeTitle,
+        podcast: podcastName,
+        date: episodeDate,
+        items: itemsRef.current,
+        sponsorText,
+        linksText,
+      });
+      setCurrentEpisodeSlug(result.slug);
+      await loadEpisodes();
+    } catch (e) {
+      console.error("Save draft failed:", e);
+    }
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(outputText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  /* ─── Edit card handlers ─── */
+  const handleStartEdit = (index) => {
+    setEditingIndex(index);
+    setEditTitle(items[index].title);
+    setEditSummary(items[index].summary);
+    setEditTags((items[index].tags || []).join(", "));
+  };
+
+  const handleSaveEdit = (index) => {
+    const updated = itemsRef.current.map((item, i) =>
+      i === index ? { ...item, title: editTitle, summary: editSummary, tags: editTags.split(",").map((t) => t.trim()).filter(Boolean) } : item
+    );
+    itemsRef.current = updated;
+    setItems([...updated]);
+    setEditingIndex(-1);
+  };
+
+  const handleCancelEdit = () => setEditingIndex(-1);
+
+  /* ─── Reorder handlers ─── */
+  const handleMoveUp = (index) => {
+    if (index === 0) return;
+    const updated = [...itemsRef.current];
+    [updated[index - 1], updated[index]] = [updated[index], updated[index - 1]];
+    itemsRef.current = updated;
+    setItems(updated);
+  };
+
+  const handleMoveDown = (index) => {
+    if (index >= items.length - 1) return;
+    const updated = [...itemsRef.current];
+    [updated[index], updated[index + 1]] = [updated[index + 1], updated[index]];
+    itemsRef.current = updated;
+    setItems(updated);
+  };
+
+  const handleDeleteItem = (index) => {
+    const updated = itemsRef.current.filter((_, i) => i !== index);
+    itemsRef.current = updated;
+    setItems(updated);
+  };
+
+  /* ─── Retry handler ─── */
+  const handleRetry = async (index) => {
+    const item = itemsRef.current[index];
+    if (!item || !apiKey) return;
+
+    const loadingItem = { ...item, status: "loading" };
+    const updated = itemsRef.current.map((i, idx) => idx === index ? loadingItem : i);
+    itemsRef.current = updated;
+    setItems([...updated]);
+
+    try {
+      const result = await summarizeLink(item.url, podcastName, episodeTitle, apiKey, customPrompt);
+      const cache = loadCache();
+      cache[getCacheKey(item.url, customPrompt)] = result;
+      saveCache(cache);
+      const doneUpdated = itemsRef.current.map((i, idx) =>
+        idx === index ? { ...i, status: "done", ...result } : i
+      );
+      itemsRef.current = doneUpdated;
+      setItems([...doneUpdated]);
+    } catch (e) {
+      const errUpdated = itemsRef.current.map((i, idx) =>
+        idx === index ? { ...i, status: "error", title: "Could not summarize", summary: e.message } : i
+      );
+      itemsRef.current = errUpdated;
+      setItems([...errUpdated]);
+    }
+  };
+
+  /* ─── RSS Import ─── */
+  const handleRSSImport = async () => {
+    if (!rssUrl) return;
+    setImportingRss(true);
+    try {
+      const rssLinks = await fetchRSSTitles(rssUrl);
+      if (!rssLinks.length) throw new Error("No links found in RSS feed");
+      // Append RSS links to the links textarea
+      const existing = linksText.trim();
+      const newText = existing ? existing + "\n" + rssLinks.join("\n") : rssLinks.join("\n");
+      setLinksText(newText);
+      setShowRssImport(false);
+      setRssUrl("");
+    } catch (e) {
+      alert("RSS import failed: " + e.message);
+    }
+    setImportingRss(false);
+  };
+
+  /* ─── AI Suggest Tags ─── */
+  const handleSuggestTags = async () => {
+    if (doneItems.length < 2 || !apiKey) return;
+    setSuggestingTags(true);
+    try {
+      const tags = await suggestCrossTags(items, apiKey);
+      setSuggestedTags(tags);
+    } catch {}
+    setSuggestingTags(false);
+  };
+
+  const handleApplySuggestedTag = (tag) => {
+    // Apply as an episode-level tag shown in the ep-info area
+    // Toggle: remove if already present
+    setSuggestedTags((prev) =>
+      prev.some((t) => t === tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  };
+
+  /* ─── Output ─── */
+  const formatArgs = [items, podcastName, episodeTitle, episodeNumber, episodeDate, sponsorText];
+
+  const outputText = (() => {
+    switch (outputFormat) {
+      case "markdown": return formatMarkdown(...formatArgs);
+      case "newsletter": return formatNewsletter(...formatArgs);
+      case "html": return formatHTML(...formatArgs);
+      case "social": return formatSocialThread(...formatArgs);
+      default: return formatMarkdown(...formatArgs);
+    }
+  })();
+
+  const renderedHTML = outputFormat === "html"
+    ? outputText
+    : outputFormat === "markdown"
+      ? `<div style="font-family:Georgia,serif;color:${TEXT};line-height:1.7;">${outputText
+          .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+          .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+          .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+          .replace(/^---$/gm, "<hr>")
+          .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+          .replace(/\*(.+?)\*/g, "<em>$1</em>")
+          .replace(/\n\n/g, "</p><p>")
+          .replace(/^(.+)$/gm, (m) => {
+            if (m.startsWith("<h") || m.startsWith("<hr")) return m;
+            // Links
+            return m.replace(/🔗 (.+)/g, '<a href="$1" style="color:' + ACCENT + '">$1</a>');
+          })
+        }</p>`
+      : null;
+
+  return (
+    <>
+      <div className="app">
+        <div className="header">
+          <div className="eyebrow">✦ Weekly workflow tool</div>
+          <h1>Show Notes<br /><span>Generator</span></h1>
+          <p className="subtitle">Paste your curated links, get AI-written summaries formatted for your podcast show notes and newsletter.</p>
+        </div>
+
+        {/* API key input */}
+        {!ENV_API_KEY && (
+          <div className="api-key-banner">
+            <span>API KEY</span>
+            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-..." />
+          </div>
+        )}
+
+        {/* Config */}
+        <div className="config-row">
+          <div className="config-field">
+            <label>Podcast Name</label>
+            <input value={podcastName} disabled />
+          </div>
+          <div className="config-field">
+            <label>Show Summary</label>
+            <input value={episodeTitle} onChange={(e) => setEpisodeTitle(e.target.value)} placeholder="This week's episode..." />
+          </div>
+          <div className="config-field config-field-sm">
+            <label>Episode #</label>
+            <input value={episodeNumber} onChange={(e) => setEpisodeNumber(e.target.value)} placeholder="42" type="number" />
+          </div>
+        </div>
+
+        {/* Date & Sponsor toggles */}
+        <div className="inline-actions">
+          <button className="collapsible-toggle" onClick={() => setEpisodeDate(episodeDate ? "" : new Date().toISOString().split("T")[0])}>
+            {episodeDate ? "▾" : "▸"} {episodeDate ? `Date: ${episodeDate}` : "Set custom date"}
+          </button>
+          <button className="collapsible-toggle" onClick={() => setShowSponsor(!showSponsor)}>
+            {showSponsor ? "▾" : "▸"} {showSponsor ? "Sponsor set" : "Add sponsor slot"}
+          </button>
+          <button className="collapsible-toggle" onClick={() => setShowCustomPrompt(!showCustomPrompt)}>
+            {showCustomPrompt ? "▾" : "▸"} {showCustomPrompt ? "Custom prompt active" : "Custom prompt"}
+          </button>
+          <button className="collapsible-toggle" onClick={() => setShowRssImport(!showRssImport)}>
+            {showRssImport ? "▾" : "▸"} RSS Import
+          </button>
+        </div>
+
+        {/* Date field */}
+        {episodeDate && (
+          <div className="config-row date-row">
+            <div className="config-field config-field-md">
+              <label>Episode Date</label>
+              <input type="date" value={episodeDate} onChange={(e) => setEpisodeDate(e.target.value)} />
+            </div>
+          </div>
+        )}
+
+        {/* Sponsor field */}
+        {showSponsor && (
+          <div className="sponsor-field">
+            <div className="link-input-area">
+              <label>Sponsor message (inserted at end of output)</label>
+              <textarea value={sponsorText} onChange={(e) => setSponsorText(e.target.value)} placeholder="This episode is brought to you by..." />
+            </div>
+          </div>
+        )}
+
+        {/* Custom prompt */}
+        {showCustomPrompt && (
+          <div className="collapsible-content collapsible-mb">
+            <div className="link-input-area">
+              <label>Custom AI prompt override (optional)</label>
+              <textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} placeholder={`Leave blank to use the default prompt.\n\nCustom example: "Summarize in a humorous tone, max 2 sentences."`} />
+            </div>
+          </div>
+        )}
+
+        {/* RSS Import */}
+        {showRssImport && (
+          <div className="collapsible-content collapsible-mb">
+            <div className="link-input-area link-input-area-sm">
+              <label>RSS Feed URL</label>
+              <div className="rss-input-row">
+                <input
+                  value={rssUrl}
+                  onChange={(e) => setRssUrl(e.target.value)}
+                  placeholder="https://example.com/feed.xml"
+                  className="rss-url-input"
+                />
+                <button className="btn-primary rss-import-btn" onClick={handleRSSImport} disabled={!rssUrl || importingRss}>
+                  {importingRss ? "Importing…" : "Import"}
+                </button>
+              </div>
+              <div className="rss-hint">
+                Extracts links from the most recent items/entries.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Link input */}
+        <div className="link-input-area">
+          <label>
+            Paste links — one per line or comma-separated
+            {duplicateCount > 0 && <span className="duplicate-badge">⚠ {duplicateCount} duplicate{duplicateCount > 1 ? "s" : ""} in input</span>}
+          </label>
+          <textarea
+            value={linksText}
+            onChange={(e) => setLinksText(e.target.value)}
+            placeholder={"https://example.com/article\nhttps://another.com/post\nhttps://youtube.com/watch?v=..."}
+          />
+        </div>
+
+        {/* Actions */}
+        <div className="actions">
+          <button className="btn-primary" onClick={handleGenerate} disabled={!canGenerate}>
+            {isRunning ? (
+              <><div className="spinner btn-spinner-dark" /> Generating…</>
+            ) : items.length > 0 ? (
+              <>✦ Add Links</>
+            ) : (
+              <>✦ Generate Show Notes</>
+            )}
+          </button>
+          {(items.length > 0 || linksText.trim()) && !isRunning && (
+            <button className="btn-secondary" onClick={handleSaveDraft}>
+              {currentEpisodeSlug ? "↑ Update Draft" : "Save Draft"}
+            </button>
+          )}
+          {items.length > 0 && !isRunning && (
+            <button className="btn-secondary" onClick={handleClear}>Clear All</button>
+          )}
+          {doneItems.length >= 2 && apiKey && !isRunning && (
+            <button className="btn-secondary" onClick={handleSuggestTags} disabled={suggestingTags}>
+              {suggestingTags ? "Suggesting…" : "🏷 Suggest tags"}
+            </button>
+          )}
+        </div>
+
+        {/* Items list */}
+        {items.length > 0 && (
+          <>
+            {isRunning && (
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${progress}%` }} />
+              </div>
+            )}
+
+            <div className="format-tabs">
+              <button className={`tab ${activeTab === "cards" ? "active" : ""}`} onClick={() => setActiveTab("cards")}>Preview</button>
+              {!isRunning && doneItems.length > 0 && (
+                <button className={`tab ${activeTab === "export" ? "active" : ""}`} onClick={() => setActiveTab("export")}>Export</button>
+              )}
+            </div>
+
+            {activeTab === "cards" && (
+              <div>
+                {/* Episode info bar */}
+                {(episodeTitle || podcastName) && (
+                  <div className="ep-info">
+                    {podcastName && <span>{podcastName}</span>}
+                    {podcastName && episodeNumber && <span> · Ep. {episodeNumber}</span>}
+                    {episodeTitle && <span> — {episodeTitle}</span>}
+                    {episodeDate && <span> · {new Date(episodeDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>}
+                    {suggestedTags.length > 0 && (
+                      <div className="suggested-tags-row">
+                        {suggestedTags.map((tag) => (
+                          <span key={tag} className="tag tag-suggested">{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {items.map((item, i) => (
+                  <div key={i} className={`item-card ${item.status === "loading" ? "loading" : ""} ${editingIndex === i ? "editing" : ""}`}>
+                    {/* Card actions (hover) */}
+                    {item.status !== "loading" && editingIndex !== i && (
+                      <div className="card-actions">
+                        <button className="btn-small" onClick={() => handleMoveUp(i)} title="Move up" disabled={i === 0}>↑</button>
+                        <button className="btn-small" onClick={() => handleMoveDown(i)} title="Move down" disabled={i >= items.length - 1}>↓</button>
+                        <button className="btn-small" onClick={() => handleStartEdit(i)} title="Edit">✎</button>
+                        <button className="btn-danger" onClick={() => handleDeleteItem(i)} title="Remove">✕</button>
+                      </div>
+                    )}
+
+                    <a className="item-url" href={item.url} target="_blank" rel="noopener noreferrer">{item.url}</a>
+
+                    {item.status === "loading" && (
+                      <div className="item-loading"><div className="spinner" />Fetching & summarizing…</div>
+                    )}
+
+                    {item.status === "error" && (
+                      <>
+                        <div className="item-error">⚠ {item.summary}</div>
+                        <button className="btn-retry" onClick={() => handleRetry(i)} disabled={isRunning}>↻ Retry</button>
+                      </>
+                    )}
+
+                    {item.status === "done" && editingIndex === i && (
+                      <>
+                        <input className="edit-field" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} placeholder="Title" />
+                        <textarea className="edit-field edit-textarea" value={editSummary} onChange={(e) => setEditSummary(e.target.value)} placeholder="Summary" />
+                        <input className="edit-field edit-tags-input" value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="Tags (comma-separated)" />
+                        <div className="edit-actions">
+                          <button className="btn-primary edit-save-btn" onClick={() => handleSaveEdit(i)}>Save</button>
+                          <button className="btn-secondary edit-cancel-btn" onClick={handleCancelEdit}>Cancel</button>
+                        </div>
+                      </>
+                    )}
+
+                    {item.status === "done" && editingIndex !== i && (
+                      <>
+                        <div className="item-title">{item.title}</div>
+                        <div className="item-summary">{item.summary}</div>
+                        {item.tags?.length > 0 && (
+                          <div className="card-tags">
+                            {item.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Export tab */}
+            {activeTab === "export" && doneItems.length > 0 && (
+              <div>
+                <div className="notes-header">
+                  <div>
+                    <div className="section-label">Formatted output</div>
+                    <div className="export-format-buttons">
+                      <button className={`tab ${outputFormat === "markdown" ? "active" : ""}`} onClick={() => setOutputFormat("markdown")}>Markdown</button>
+                      <button className={`tab ${outputFormat === "newsletter" ? "active" : ""}`} onClick={() => setOutputFormat("newsletter")}>Newsletter</button>
+                      <button className={`tab ${outputFormat === "html" ? "active" : ""}`} onClick={() => setOutputFormat("html")}>HTML</button>
+                      <button className={`tab ${outputFormat === "social" ? "active" : ""}`} onClick={() => setOutputFormat("social")}>Social</button>
+                    </div>
+                  </div>
+                  <button className="copy-btn" onClick={handleCopy}>{copied ? "✓ Copied!" : "Copy all"}</button>
+                </div>
+
+                {/* Markdown Preview toggle */}
+                {outputFormat === "markdown" && (
+                  <div className="md-preview-toggle">
+                    <button className="collapsible-toggle" onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}>
+                      {showMarkdownPreview ? "▾ Hide preview" : "▸ Show rendered preview"}
+                    </button>
+                  </div>
+                )}
+
+                {showMarkdownPreview && outputFormat === "markdown" && (
+                  <div className="output-box md-preview-box">
+                    <div className="output-html-preview" dangerouslySetInnerHTML={{ __html: renderedHTML }} />
+                  </div>
+                )}
+
+                <div className="output-box">
+                  <pre className="output-text">{outputText}</pre>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ─── Episodes Panel ─── */}
+      <div className="episodes-container">
+        <button
+          onClick={() => setShowEpisodes((v) => !v)}
+          className={episodes.length > 0 ? "episodes-toggle" : "episodes-toggle empty"}
+        >
+          <span className="chevron">{showEpisodes ? "▲" : "▼"}</span>
+          Episodes {episodes.length > 0 ? `(${episodes.filter(e => !doneSlugs.includes(e.slug)).length} draft · ${episodes.filter(e => doneSlugs.includes(e.slug)).length} done)` : ""}
+        </button>
+
+        {showEpisodes && (
+          <div className="episodes-panel">
+
+            <button
+              className="btn-primary episodes-new-btn"
+              onClick={() => {
+                // Save current draft first if there's a slug
+                if (currentEpisodeSlug) handleSaveDraft();
+                setEpisodeTitle("");
+                setEpisodeNumber("");
+                setEpisodeDate("");
+                setItems([]);
+                itemsRef.current = [];
+                setLinksText("");
+                setSponsorText("");
+                setShowSponsor(false);
+                setCurrentEpisodeSlug(null);
+              }}
+            >
+              + New Episode
+            </button>
+
+            {/* Drafts section */}
+            {episodes.some(e => !doneSlugs.includes(e.slug)) && (
+              <div>
+                <div className="episodes-section-label">In Progress</div>
+                <div className="episodes-list">
+                  {episodes.filter(e => !doneSlugs.includes(e.slug)).map((ep) => {
+                    const label = [ep.podcast, ep.number && `Ep. ${ep.number}`, ep.title].filter(Boolean).join(" · ");
+                    const isActive = ep.slug === currentEpisodeSlug;
+                    return (
+                      <div key={ep.slug} className={isActive ? "episode-card active" : "episode-card"}>
+                        <div className="episode-card-minwidth">
+                          <div className="episode-card-label">
+                            {label || "Untitled Episode"}
+                            {isActive && <span className="episode-active-badge">● active</span>}
+                          </div>
+                          <div className="episode-card-meta">
+                            {ep.slug}{ep.date ? ` · ${new Date(ep.date).toLocaleDateString()}` : ""}{ep.links?.length ? ` · ${ep.links.length} link${ep.links.length !== 1 ? "s" : ""}` : ""}
+                          </div>
+                        </div>
+                        <div className="episode-card-actions">
+                          <button
+                            onClick={async () => {
+                              // Save current state first
+                              if (currentEpisodeSlug && (episodeTitle || episodeNumber || itemsRef.current.length > 0 || linksText.trim())) {
+                                try {
+                                  await saveEpisode({
+                                    number: episodeNumber,
+                                    title: episodeTitle,
+                                    podcast: podcastName,
+                                    date: episodeDate,
+                                    items: itemsRef.current,
+                                    sponsorText,
+                                    linksText,
+                                  });
+                                } catch {}
+                              }
+                              // Load the selected episode
+                              setPodcastName(ep.podcast || podcastName);
+                              setEpisodeTitle(ep.title || "");
+                              setEpisodeNumber(ep.number || "");
+                              setEpisodeDate(ep.date || "");
+                              setItems([]);
+                              itemsRef.current = [];
+                              setLinksText("");
+                              setCurrentEpisodeSlug(ep.slug);
+                              setActiveTab("cards");
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
+                            className="episodes-continue-btn"
+                          >
+                            Continue
+                          </button>
+                          <button
+                            onClick={async () => {
+                              // Save to file with no pending links (marks as complete)
+                              try {
+                                await saveEpisode({
+                                  number: ep.number || episodeNumber,
+                                  title: ep.title || episodeTitle,
+                                  podcast: ep.podcast || podcastName,
+                                  date: ep.date || episodeDate,
+                                  items: [],
+                                  sponsorText: "",
+                                  linksText: "",
+                                });
+                              } catch {}
+                              setDoneSlugs(prev => [...prev, ep.slug]);
+                              await loadEpisodes();
+                            }}
+                            className="episodes-done-btn"
+                          >
+                            ✓ Done
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await deleteEpisode(ep.slug);
+                                setDoneSlugs(prev => prev.filter(s => s !== ep.slug));
+                                await loadEpisodes();
+                              } catch (e) {
+                                console.error("Delete failed:", e);
+                              }
+                            }}
+                            className="episodes-delete-btn"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Archive section */}
+            {episodes.some(e => doneSlugs.includes(e.slug)) && (
+              <div>
+                <div className="episodes-section-label">Archive</div>
+                <div className="episodes-list">
+                  {episodes.filter(e => doneSlugs.includes(e.slug)).map((ep) => {
+                    const label = [ep.podcast, ep.number && `Ep. ${ep.number}`, ep.title].filter(Boolean).join(" · ");
+                    return (
+                      <div key={ep.slug} className="episode-card done">
+                        <div className="episode-card-minwidth">
+                          <div className="episode-card-label">
+                            {label || "Untitled Episode"}
+                          </div>
+                          <div className="episode-card-meta">
+                            {ep.slug}{ep.date ? ` · ${new Date(ep.date).toLocaleDateString()}` : ""}{ep.links?.length ? ` · ${ep.links.length} link${ep.links.length !== 1 ? "s" : ""}` : ""}
+                          </div>
+                        </div>
+                        <div className="episode-card-actions">
+                          <button
+                            onClick={() => {
+                              setPodcastName(ep.podcast || podcastName);
+                              setEpisodeTitle(ep.title || "");
+                              setEpisodeNumber(ep.number || "");
+                              setEpisodeDate(ep.date || "");
+                              setItems([]);
+                              itemsRef.current = [];
+                              setLinksText("");
+                              setCurrentEpisodeSlug(ep.slug);
+                              setActiveTab("cards");
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
+                            className="episodes-view-btn"
+                          >
+                            View
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await deleteEpisode(ep.slug);
+                                setDoneSlugs(prev => prev.filter(s => s !== ep.slug));
+                                await loadEpisodes();
+                              } catch (e) {
+                                console.error("Delete failed:", e);
+                              }
+                            }}
+                            className="episodes-delete-btn"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {episodes.length === 0 && (
+              <div className="episodes-empty">No episodes yet. Save a draft or generate to get started.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
