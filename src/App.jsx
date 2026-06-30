@@ -68,9 +68,17 @@ export default function ShowNotesGenerator() {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [pulling, setPulling] = useState(false);
+  const [hydrating, setHydrating] = useState(true);
 
   const itemsRef = useRef([]);
+  const syncTimerRef = useRef(null);
   const initialized = useRef(false);
+
+  function setSyncMessageWithTimeout(msg, duration = 3000) {
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    setSyncMessage(msg);
+    syncTimerRef.current = setTimeout(() => setSyncMessage(""), duration);
+  }
 
   /* ─── localStorage persistence ─── */
   useEffect(() => {
@@ -90,6 +98,7 @@ export default function ShowNotesGenerator() {
         setItems(saved.items);
         itemsRef.current = saved.items;
       }
+      setHydrating(false);
     }
   }, []);
 
@@ -253,7 +262,7 @@ export default function ShowNotesGenerator() {
   }
 
   async function handleSyncToCraft() {
-    if (!craftKey) { setSyncMessage("Set Craft API key first"); setTimeout(() => setSyncMessage(""), 3000); return; }
+    if (!craftKey) { setSyncMessageWithTimeout("Set Craft API key first"); return; }
     setSyncing(true);
     setSyncMessage("");
     try {
@@ -326,7 +335,7 @@ export default function ShowNotesGenerator() {
           });
         }
 
-        setSyncMessage("Updated in Craft!");
+        setSyncMessageWithTimeout("Updated in Craft!");
       } else {
         // Create new document with slug marker in title
         const createResp = await callMCP("tools/call", {
@@ -346,24 +355,22 @@ export default function ShowNotesGenerator() {
           });
         }
 
-        setSyncMessage("Synced to Craft!");
+        setSyncMessageWithTimeout("Synced to Craft!");
       }
-      setTimeout(() => setSyncMessage(""), 3000);
     } catch (e) {
       console.error("Craft sync error:", e);
-      setSyncMessage("Sync failed: " + e.message);
-      setTimeout(() => setSyncMessage(""), 4000);
+      setSyncMessageWithTimeout("Sync failed: " + e.message, 4000);
     }
     setSyncing(false);
   }
 
   async function handlePullFromCraft() {
-    if (!craftKey) { setSyncMessage("Set Craft API key first"); setTimeout(() => setSyncMessage(""), 3000); return; }
+    if (!craftKey) { setSyncMessageWithTimeout("Set Craft API key first"); return; }
     setPulling(true);
     setSyncMessage("");
     try {
       const slug = currentEpisodeSlug;
-      if (!slug) { setSyncMessage("No episode loaded"); setTimeout(() => setSyncMessage(""), 2000); return; }
+      if (!slug) { setSyncMessageWithTimeout("No episode loaded", 2000); return; }
       const slugMarker = `[${slug}]`;
 
       // Find the Craft doc
@@ -377,7 +384,7 @@ export default function ShowNotesGenerator() {
         const m = line.match(/<(\S+)>\s+(.+)/);
         if (m && m[2].includes(slugMarker)) { foundId = m[1]; break; }
       }
-      if (!foundId) { setSyncMessage("No Craft doc found for this episode"); setTimeout(() => setSyncMessage(""), 3000); setPulling(false); return; }
+      if (!foundId) { setSyncMessageWithTimeout("No Craft doc found for this episode"); setPulling(false); return; }
 
       // Read the document content
       const getResp = await callMCP("tools/call", {
@@ -440,12 +447,10 @@ export default function ShowNotesGenerator() {
         }
       }
 
-      setSyncMessage("Pulled from Craft!");
-      setTimeout(() => setSyncMessage(""), 3000);
+      setSyncMessageWithTimeout("Pulled from Craft!");
     } catch (e) {
       console.error("Craft pull error:", e);
-      setSyncMessage("Pull failed: " + e.message);
-      setTimeout(() => setSyncMessage(""), 4000);
+      setSyncMessageWithTimeout("Pull failed: " + e.message, 4000);
     }
     setPulling(false);
   }
@@ -583,6 +588,18 @@ export default function ShowNotesGenerator() {
     : outputFormat === "markdown"
       ? DOMPurify.sanitize(marked.parse(outputText))
       : null;
+
+  if (hydrating) {
+    return (
+      <div className="app" style={{ textAlign: "center", padding: "80px 24px" }}>
+        <div className="eyebrow">✦ Weekly workflow tool</div>
+        <h1 style={{ fontSize: "clamp(32px, 6vw, 52px)", fontWeight: 800, lineHeight: 1.05 }}>
+          Show Notes<br /><span style={{ color: "#E8FF47" }}>Generator</span>
+        </h1>
+        <p style={{ color: "#666", marginTop: 16 }}>Loading…</p>
+      </div>
+    );
+  }
 
   return (
     <>
