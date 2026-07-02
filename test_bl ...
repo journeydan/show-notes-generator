@@ -1,0 +1,54 @@
+python3 << 'PYEOF'
+import json, urllib.request
+
+with open("/Users/danielbader/Documents/Apps/show-notes-generator/show-notes-generator/craft_api_key.txt") as f:
+    key = f.read().strip()
+
+MCP_URL = "https://mcp.craft.do/links/7foILXddSEb/mcp"
+
+def mcp(method, params=None):
+    payload = {"jsonrpc": "2.0", "method": method, "id": 1}
+    if params: payload["params"] = params
+    req = urllib.request.Request(MCP_URL, data=json.dumps(payload).encode(),
+        headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream",
+            "User-Agent":"Hermes/1.0","Authorization":"Bearer "+key}, method="POST")
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        for line in resp.read().decode().split('\n'):
+            if line.startswith('data: '): return json.loads(line[6:])
+    return None
+
+# First, create a test doc
+r = mcp("tools/call", {"name":"craft_write","arguments":{"command":'documents create --title "Test [test-001]" --folder 9477946A-1CFA-454B-BDAC-7C9E0970EB61'}})
+print("CREATE:", json.dumps(r, indent=2)[:300])
+
+# Add some blocks
+content = r['result']['content'][0]['text']
+import re
+root_match = re.search(r'rootBlockId: (\S+)', content)
+if root_match:
+    root_id = root_match.group(1)
+    print(f"\nRoot ID: {root_id}")
+    
+    r2 = mcp("tools/call", {"name":"craft_write","arguments":{"command":f'blocks add --id {root_id} --markdown "## Test Item\n\nhttps://example.com"'}})
+    print("ADD BLOCKS:", json.dumps(r2, indent=2)[:200])
+    
+    # Now fetch with JSON format
+    r3 = mcp("tools/call", {"name":"craft_read","arguments":{"command":f'blocks get {root_id} --depth 1 --format json'}})
+    print("\nBLOCKS GET JSON (first 1500 chars):")
+    text = r3['result']['content'][0]['text']
+    print(text[:1500])
+    
+    # Test the regex
+    matches = re.findall(r'"[^"]*[Bb]lock[Ii][Dd][^"]*":\s*"([^"]+)"', text)
+    print(f"\nRegex 'blockId' matches: {matches}")
+    
+    matches2 = re.findall(r'"id":\s*"([^"]+)"', text)
+    print(f"Regex 'id' matches (first 5): {matches2[:5]}")
+    
+    # Now try markdown format
+    r4 = mcp("tools/call", {"name":"craft_read","arguments":{"command":f'blocks get {root_id} --format markdown'}})
+    print("\n---\nBLOCKS GET MARKDOWN (first 500):")
+    print(r4['result']['content'][0]['text'][:500])
+
+# Cleanup: test deleting blocks
+PYEOF

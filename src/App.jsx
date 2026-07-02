@@ -341,10 +341,19 @@ export default function ShowNotesGenerator() {
 
         // Delete child blocks (skip root block ID)
         const getText = getResp?.result?.content?.[0]?.text || "";
-        const blockIds = getText.match(/"[^"]*blockId[^"]*":\s*"([^"]+)"/g)?.map(s => {
-          const m = s.match(/"([^"]+)"/);
-          return m ? m[1] : null;
-        }).filter(id => id && id !== existingDocId) || [];
+        let blockIds = [];
+        try {
+          const parsed = JSON.parse(getText);
+          const rootContent = parsed?.data?.[0]?.content || [];
+          blockIds = rootContent.map(b => b.id).filter(id => id && id !== existingDocId);
+        } catch {
+          // Fallback: try regex
+          const idRegex = /"id":\s*"([^"]+)"/g;
+          let m;
+          while ((m = idRegex.exec(getText)) !== null) {
+            if (m[1] !== existingDocId) blockIds.push(m[1]);
+          }
+        }
 
         for (const bid of blockIds) {
           await callMCP("tools/call", {
