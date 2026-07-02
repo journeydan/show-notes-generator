@@ -11,15 +11,17 @@ async function callAnthropic(body, apiKey) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    // 404 means the proxy endpoint doesn't exist (e.g., on Vercel) — fall through to direct
+    if (resp.status === 404) throw new Error("NOT_FOUND");
     proxyReachable = true;
     if (resp.ok) return await resp.json();
-    // Proxy responded with an error — surface that instead of falling through
+    // Proxy responded with a genuine error (5xx, etc.) — surface that
     const errData = await resp.json().catch(() => ({}));
     throw new Error(errData?.error?.message || `Proxy error (${resp.status})`);
   } catch (e) {
-    // If proxy was reachable, propagate the error instead of silently retrying direct
+    // If proxy was reachable (not 404), propagate the error
     if (proxyReachable) throw e;
-    // Proxy unreachable — fall back to direct API call
+    // Proxy unreachable or doesn't exist — fall back to direct API call
   }
   // Fallback: direct API call from browser (needs dangerous header for CORS)
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
