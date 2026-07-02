@@ -12,13 +12,14 @@ async function callAnthropic(body, apiKey) {
     });
     if (resp.ok) return await resp.json();
   } catch {}
-  // Fallback: direct API call from browser
+  // Fallback: direct API call from browser (needs dangerous header for CORS)
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify(body),
   });
