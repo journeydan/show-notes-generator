@@ -56,7 +56,10 @@ function loadLocalEpisodes() {
 }
 
 function saveLocalEpisodes(episodes) {
-  try { localStorage.setItem(EPISODES_LOCAL_KEY, JSON.stringify(episodes)); } catch {}
+  try {
+    localStorage.setItem(EPISODES_LOCAL_KEY, JSON.stringify(episodes));
+    return true;
+  } catch { return false; }
 }
 
 // ─── File-based episode API (with localStorage fallback) ───
@@ -135,8 +138,9 @@ export async function saveEpisode(data) {
   } else {
     episodes.unshift(episode);
   }
-  saveLocalEpisodes(episodes.slice(0, 100));
-  return episode;
+  const saved = saveLocalEpisodes(episodes.slice(0, 100));
+  if (saved) return episode;
+  throw new Error("Could not save episode — both API and localStorage are unavailable");
 }
 
 export async function deleteEpisode(slug) {

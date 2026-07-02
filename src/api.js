@@ -4,14 +4,23 @@ function extractDomain(url) {
 
 async function callAnthropic(body, apiKey) {
   // Try proxy first (local dev with server running)
+  let proxyReachable = false;
   try {
     const resp = await fetch("/api/anthropic/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    proxyReachable = true;
     if (resp.ok) return await resp.json();
-  } catch {}
+    // Proxy responded with an error — surface that instead of falling through
+    const errData = await resp.json().catch(() => ({}));
+    throw new Error(errData?.error?.message || `Proxy error (${resp.status})`);
+  } catch (e) {
+    // If proxy was reachable, propagate the error instead of silently retrying direct
+    if (proxyReachable) throw e;
+    // Proxy unreachable — fall back to direct API call
+  }
   // Fallback: direct API call from browser (needs dangerous header for CORS)
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -23,6 +32,10 @@ async function callAnthropic(body, apiKey) {
     },
     body: JSON.stringify(body),
   });
+  if (!resp.ok) {
+    const errData = await resp.json().catch(() => ({}));
+    throw new Error(errData?.error?.message || `API error (${resp.status})`);
+  }
   return await resp.json();
 }
 

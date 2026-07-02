@@ -71,9 +71,11 @@ export default function ShowNotesGenerator() {
   const [hydrating, setHydrating] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState("");
 
   const itemsRef = useRef([]);
   const syncTimerRef = useRef(null);
+  const actionTimerRef = useRef(null);
   const initialized = useRef(false);
   const mcpInitialized = useRef(false);
 
@@ -81,6 +83,12 @@ export default function ShowNotesGenerator() {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     setSyncMessage(msg);
     syncTimerRef.current = setTimeout(() => setSyncMessage(""), duration);
+  }
+
+  function setActionMessageWithTimeout(msg, duration = 4000) {
+    if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+    setActionMessage(msg);
+    actionTimerRef.current = setTimeout(() => setActionMessage(""), duration);
   }
 
   /* ─── localStorage persistence ─── */
@@ -132,6 +140,14 @@ export default function ShowNotesGenerator() {
   useEffect(() => {
     localStorage.setItem("show-notes-done-slugs", JSON.stringify(doneSlugs));
   }, [doneSlugs]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+    };
+  }, []);
 
   /* ─── Derived ─── */
   const doneItems = items.filter((i) => i.status === "done");
@@ -246,7 +262,8 @@ export default function ShowNotesGenerator() {
       return result;
     } catch (e) {
       console.error("Save draft failed:", e);
-      return null;
+      setActionMessageWithTimeout("Save draft failed: " + e.message);
+      throw e;
     }
   };
 
@@ -567,7 +584,9 @@ export default function ShowNotesGenerator() {
     try {
       const tags = await suggestCrossTags(items, apiKey);
       setSuggestedTags(tags);
-    } catch {}
+    } catch (e) {
+      setActionMessageWithTimeout("Could not suggest tags: " + (e.message || "unknown error"));
+    }
     setSuggestingTags(false);
   };
 
@@ -642,6 +661,12 @@ export default function ShowNotesGenerator() {
         {loadError && (
           <div className="api-key-banner" style={{ borderColor: "#ff444480", color: "#ff444499" }}>
             <span>⚠ {loadError}</span>
+          </div>
+        )}
+
+        {actionMessage && (
+          <div className="api-key-banner" style={{ borderColor: "#ffaa0040", color: "#ffaa00" }}>
+            <span>⚠ {actionMessage}</span>
           </div>
         )}
 
@@ -755,7 +780,9 @@ export default function ShowNotesGenerator() {
             )}
           </button>
           {(items.length > 0 || linksText.trim()) && !isRunning && (
-            <button className="btn-secondary" onClick={handleSaveDraft}>
+            <button className="btn-secondary" onClick={async () => {
+              try { await handleSaveDraft(); } catch {}
+            }}>
               {currentEpisodeSlug ? "↑ Update Draft" : "Save Draft"}
             </button>
           )}
@@ -1041,6 +1068,7 @@ export default function ShowNotesGenerator() {
                                 await loadEpisodes();
                               } catch (e) {
                                 console.error("Delete failed:", e);
+                                setActionMessageWithTimeout("Delete failed: " + e.message);
                               }
                             }}
                             className="episodes-delete-btn"
@@ -1104,6 +1132,7 @@ export default function ShowNotesGenerator() {
                                 await loadEpisodes();
                               } catch (e) {
                                 console.error("Delete failed:", e);
+                                setActionMessageWithTimeout("Delete failed: " + e.message);
                               }
                             }}
                             className="episodes-delete-btn"
