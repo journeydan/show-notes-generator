@@ -759,12 +759,12 @@ export default function ShowNotesGenerator() {
               {currentEpisodeSlug ? "↑ Update Draft" : "Save Draft"}
             </button>
           )}
-          {(items.length > 0 || linksText.trim()) && !isRunning && (
+          {craftKey && (items.length > 0 || linksText.trim()) && !isRunning && (
             <button className="btn-craft" onClick={handleSyncToCraft} disabled={syncing}>
               {syncing ? "Syncing…" : syncMessage || "Sync to Craft"}
             </button>
           )}
-          {currentEpisodeSlug && !isRunning && (
+          {craftKey && currentEpisodeSlug && !isRunning && (
             <button className="btn-craft" onClick={handlePullFromCraft} disabled={pulling} style={{ borderColor: "#666", color: "#999" }}>
               {pulling ? "Pulling…" : "Pull from Craft"}
             </button>
