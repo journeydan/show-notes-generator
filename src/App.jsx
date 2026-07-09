@@ -149,6 +149,31 @@ export default function ShowNotesGenerator() {
     } catch {}
   }, [doneSlugs]);
 
+  // Handle shared link via query parameter ?add=URL
+  useEffect(() => {
+    if (hydrating) return;
+    const params = new URLSearchParams(window.location.search);
+    const addUrl = params.get("add");
+    if (addUrl) {
+      try {
+        new URL(addUrl); // validate
+        setLinksText((prev) => {
+          const list = prev ? prev.split("\n").map(l => l.trim()).filter(Boolean) : [];
+          if (!list.includes(addUrl)) {
+            list.push(addUrl);
+          }
+          return list.join("\n");
+        });
+        // Remove query parameter from address bar
+        const newUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+        setActionMessageWithTimeout("Shared link added to pending links!");
+      } catch (e) {
+        console.error("Invalid URL in 'add' query parameter:", addUrl);
+      }
+    }
+  }, [hydrating]);
+
   // Cleanup timers on unmount
   useEffect(() => {
     return () => {
