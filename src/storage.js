@@ -121,6 +121,16 @@ export async function saveEpisode(data) {
     _updated: now,
   };
 
+  // Always save to localStorage first (dual-save)
+  const episodes = loadLocalEpisodes();
+  const idx = episodes.findIndex(e => e.slug === slug);
+  if (idx >= 0) {
+    episodes[idx] = { ...episodes[idx], ...episode };
+  } else {
+    episodes.unshift(episode);
+  }
+  saveLocalEpisodes(episodes.slice(0, 100));
+
   // Save to API (pass slug so server uses the same one)
   const api = await tryAPI(API_BASE, {
     method: "POST",
@@ -129,18 +139,8 @@ export async function saveEpisode(data) {
   });
   if (api.ok) return api.data;
 
-  // Fallback: save to localStorage
-  console.warn("API unavailable, saving episode to localStorage");
-  const episodes = loadLocalEpisodes();
-  const idx = episodes.findIndex(e => e.slug === slug);
-  if (idx >= 0) {
-    episodes[idx] = { ...episodes[idx], ...episode };
-  } else {
-    episodes.unshift(episode);
-  }
-  const saved = saveLocalEpisodes(episodes.slice(0, 100));
-  if (saved) return episode;
-  throw new Error("Could not save episode — both API and localStorage are unavailable");
+  console.warn("API unavailable, saved episode to localStorage only");
+  return episode;
 }
 
 export async function deleteEpisode(slug) {

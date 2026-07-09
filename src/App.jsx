@@ -31,7 +31,13 @@ const CRAFT_FOLDER = "9477946A-1CFA-454B-BDAC-7C9E0970EB61";
 /* ─── Component ─── */
 export default function ShowNotesGenerator() {
   const [apiKey, setApiKey] = useState(ENV_API_KEY);
-  const [craftKey, setCraftKey] = useState(() => localStorage.getItem("craft-api-key") || ENV_CRAFT_KEY);
+  const [craftKey, setCraftKey] = useState(() => {
+    try {
+      return localStorage.getItem("craft-api-key") || ENV_CRAFT_KEY;
+    } catch {
+      return ENV_CRAFT_KEY;
+    }
+  });
   const [podcastName, setPodcastName] = useState("Old's Cool");
   const [episodeTitle, setEpisodeTitle] = useState("");
   const [episodeNumber, setEpisodeNumber] = useState("");
@@ -109,8 +115,8 @@ export default function ShowNotesGenerator() {
         setItems(saved.items);
         itemsRef.current = saved.items;
       }
-      setHydrating(false);
     }
+    setHydrating(false);
   }, []);
 
   useEffect(() => {
@@ -138,7 +144,9 @@ export default function ShowNotesGenerator() {
 
   // Persist done slugs to localStorage
   useEffect(() => {
-    localStorage.setItem("show-notes-done-slugs", JSON.stringify(doneSlugs));
+    try {
+      localStorage.setItem("show-notes-done-slugs", JSON.stringify(doneSlugs));
+    } catch {}
   }, [doneSlugs]);
 
   // Cleanup timers on unmount
@@ -662,7 +670,9 @@ export default function ShowNotesGenerator() {
             <span>CRAFT KEY</span>
             <input type="password" value={craftKey} onChange={(e) => {
               setCraftKey(e.target.value);
-              if (e.target.value) localStorage.setItem("craft-api-key", e.target.value);
+              if (e.target.value) {
+                try { localStorage.setItem("craft-api-key", e.target.value); } catch {}
+              }
             }} placeholder="pdk_..." />
           </div>
         )}
