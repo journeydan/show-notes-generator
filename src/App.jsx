@@ -152,25 +152,38 @@ export default function ShowNotesGenerator() {
   // Handle shared link via query parameter ?add=URL
   useEffect(() => {
     if (hydrating) return;
-    const params = new URLSearchParams(window.location.search);
-    const addUrl = params.get("add");
-    if (addUrl) {
-      try {
-        new URL(addUrl); // validate
-        setLinksText((prev) => {
-          const list = prev ? prev.split("\n").map(l => l.trim()).filter(Boolean) : [];
-          if (!list.includes(addUrl)) {
-            list.push(addUrl);
-          }
-          return list.join("\n");
-        });
-        // Remove query parameter from address bar
-        const newUrl = window.location.origin + window.location.pathname;
-        window.history.replaceState({}, document.title, newUrl);
-        setActionMessageWithTimeout("Shared link added to pending links!");
-      } catch (e) {
-        console.error("Invalid URL in 'add' query parameter:", addUrl);
+    const search = window.location.search;
+    let addUrl = null;
+    try {
+      if (search.startsWith("?add=")) {
+        addUrl = decodeURIComponent(search.slice(5));
+      } else {
+        const params = new URLSearchParams(search);
+        addUrl = params.get("add");
       }
+      if (addUrl) {
+        // Extract the first http:// or https:// URL (handles title prefixes/whitespace/rich metadata)
+        const urlRegex = /https?:\/\/[^\s]+/i;
+        const match = addUrl.match(urlRegex);
+        if (match) {
+          const cleanUrl = match[0].trim();
+          setLinksText((prev) => {
+            const list = prev ? prev.split("\n").map(l => l.trim()).filter(Boolean) : [];
+            if (!list.includes(cleanUrl)) {
+              list.push(cleanUrl);
+            }
+            return list.join("\n");
+          });
+          // Remove query parameter from address bar without page refresh
+          const newUrl = window.location.origin + window.location.pathname;
+          window.history.replaceState({}, document.title, newUrl);
+          setActionMessageWithTimeout("Shared link added to pending links!");
+        } else {
+          console.error("No valid URL found in 'add' query parameter:", addUrl);
+        }
+      }
+    } catch (e) {
+      console.error("Error parsing 'add' query parameter:", e);
     }
   }, [hydrating]);
 
